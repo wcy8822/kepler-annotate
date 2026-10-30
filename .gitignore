@@ -1,0 +1,14 @@
+node_modules/
+native-host-config.json*
+verification/
+.kepler-annotate/
+HANDOFF*
+__pycache__/
+*.pyc
+.DS_Store
+.env*
+*.zip
+profiles/
+test-results/
+playwright-report/
+native-host-launcher*

@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Kepler Annotate · 网页批注",
+  "version": "1.4.0",
+  "description": "按项目批次批注网页，自动同步项目本地，通过 Skill 查询增量并回写 AI 处理结果。",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "unlimitedStorage",
+    "nativeMessaging"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "action": {
+    "default_title": "打开／收起网页批注"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+A"
+      },
+      "description": "打开当前网页批注"
+    }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}

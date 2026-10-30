@@ -1,0 +1,98 @@
+#kp-annotate-root{
+  --ka-ink:#b9470a;--ka-ink-hover:#963707;--ka-soft:#fff0e5;--ka-paper:#fff;
+  --ka-surface:#f7f7f3;--ka-text:#252620;--ka-muted:#62645a;--ka-line:#dedfd6;
+  --ka-elevation:0 12px 42px rgb(30 31 23 / .16);--ka-toolbar-height:54px;
+  position:fixed;inset:0;z-index:2147483000;pointer-events:none;color:var(--ka-text);
+  font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",sans-serif;
+  text-align:left;color-scheme:light;letter-spacing:normal
+}
+#kp-annotate-root[hidden],#kp-annotate-root [hidden]{display:none!important}
+#kp-annotate-root *{box-sizing:border-box}
+#kp-annotate-root ::selection{background:#ffd9bb;color:#442307}
+#kp-annotate-root :is(button,input,select,textarea){font:inherit;color:inherit;letter-spacing:inherit}
+#kp-annotate-root button{border:1px solid var(--ka-line);background:var(--ka-paper);border-radius:8px;min-height:36px;padding:6px 12px;cursor:pointer;white-space:nowrap;box-shadow:none;transition:background-color .16s ease,border-color .16s ease}
+#kp-annotate-root button:hover{background:var(--ka-surface);border-color:#a4a69b}
+#kp-annotate-root :is(button,a,input,textarea,select,summary):focus-visible{outline:2px solid var(--ka-ink);outline-offset:3px}
+#kp-annotate-root button:disabled{opacity:.48;cursor:default}
+#kp-annotate-root button[aria-pressed=true],#kp-annotate-root [data-action=save]{background:var(--ka-ink);border-color:var(--ka-ink);color:#fff}
+#kp-annotate-root [data-action=save]:hover{background:var(--ka-ink-hover)}
+#kp-annotate-root [data-action=project-read],#kp-annotate-root [data-project=bind]{color:var(--ka-ink);background:var(--ka-soft);border-color:#e5b79a}
+#kp-annotate-root [data-delete],#kp-annotate-root [data-action=clear]{color:#874235}
+#kp-annotate-root .ka-layer{position:absolute;inset:0;width:100%;height:100%;overflow:hidden;pointer-events:none;fill:none;stroke:var(--ka-ink);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+#kp-annotate-root[data-mode=region] .ka-layer,#kp-annotate-root[data-mode=pen] .ka-layer,#kp-annotate-root[data-mode=arrow] .ka-layer{pointer-events:auto;cursor:crosshair;touch-action:none}
+#kp-annotate-root .ka-highlight{stroke-dasharray:5 3;fill:var(--ka-soft);fill-opacity:.3}
+#kp-annotate-root .ka-toolbar{position:absolute;right:16px;bottom:16px;display:flex;flex-wrap:wrap;align-items:center;gap:4px;max-width:calc(100vw - 32px);padding:8px;background:var(--ka-paper);border:0;border-radius:12px;pointer-events:auto;box-shadow:var(--ka-elevation)}
+#kp-annotate-root .ka-toolbar button{border-color:transparent;font-size:13px;min-height:34px;padding:5px 10px}
+#kp-annotate-root .ka-toolbar button[aria-pressed=true]{border-color:var(--ka-ink)}
+#kp-annotate-root .ka-toolbar [data-action=list]{margin-left:8px;background:var(--ka-surface)}
+#kp-annotate-root .ka-toolbar [data-action=freeze-delay]{margin-left:4px}
+#kp-annotate-root .ka-toolbar [data-action=close]{color:var(--ka-muted)}
+#kp-annotate-root .ka-caption{font-weight:700;font-size:13px;padding:0 12px 0 6px;border-right:1px solid var(--ka-line);margin-right:4px;white-space:nowrap}
+#kp-annotate-root .ka-count{font-variant-numeric:tabular-nums;font-weight:600;padding:0 2px}
+#kp-annotate-root .ka-marker{position:absolute;pointer-events:auto;border:2px solid white;border-radius:50%;width:28px;min-height:28px;height:28px;padding:0;background:var(--ka-ink);color:#fff;font-size:12px;font-weight:700;transform:translate(-6px,-6px);box-shadow:0 2px 6px rgb(30 31 23 / .2)}
+#kp-annotate-root .ka-marker:hover{background:var(--ka-ink-hover)}
+#kp-annotate-root .ka-list{position:absolute;right:16px;bottom:calc(var(--ka-toolbar-height) + 28px);width:min(464px,calc(100vw - 32px));max-height:calc(100dvh - var(--ka-toolbar-height) - 48px);background:var(--ka-paper);border:0;border-radius:14px;pointer-events:auto;display:flex;flex-direction:column;box-shadow:var(--ka-elevation);overflow:hidden}
+#kp-annotate-root :is(header,footer){display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;border:0}
+#kp-annotate-root .ka-list header{border-bottom:1px solid var(--ka-line)}
+#kp-annotate-root .ka-list footer{flex-wrap:wrap;background:var(--ka-surface)}
+#kp-annotate-root .ka-list footer small{width:100%}
+#kp-annotate-root h2{font-size:17px;line-height:1.4;margin:0;font-weight:650;color:inherit;letter-spacing:-.015em}
+#kp-annotate-root h3{font-size:12px;margin:24px 0 8px;color:var(--ka-muted);font-weight:600}
+#kp-annotate-root h4{font-size:14px;font-weight:600;line-height:1.5;margin:12px 0 2px}
+#kp-annotate-root p{margin:10px 0}
+#kp-annotate-root small{color:var(--ka-muted);font-size:12px;line-height:1.5}
+#kp-annotate-root .ka-list-body{overflow:auto;overscroll-behavior:contain;padding:0 20px 16px;scrollbar-color:#b9bcb0 transparent;scrollbar-width:thin}
+#kp-annotate-root .ka-list-body small{overflow-wrap:anywhere}
+#kp-annotate-root .ka-management{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+#kp-annotate-root .ka-management>small,#kp-annotate-root .ka-management-buttons{grid-column:1/-1}
+#kp-annotate-root .ka-management>small{margin-top:10px}
+#kp-annotate-root .ka-management-buttons{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 16px}
+#kp-annotate-root .ka-management-buttons button{font-size:12px;padding:4px 9px;min-height:32px}
+#kp-annotate-root .ka-project-summary{color:var(--ka-muted);font-size:12px;overflow-wrap:anywhere;margin:0 0 10px}
+#kp-annotate-root .ka-filters{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+#kp-annotate-root .ka-bulk{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;padding:12px 0 16px;border-bottom:1px solid var(--ka-line)}
+#kp-annotate-root .ka-bulk label{display:flex;grid-column:1/-1;align-items:center;margin:0;width:100%;font-size:12px;color:var(--ka-muted)}
+#kp-annotate-root .ka-bulk select{width:100%;padding:5px 8px;font-size:12px;min-height:32px}
+#kp-annotate-root .ka-bulk button{font-size:12px;min-height:32px;padding:4px 9px}
+#kp-annotate-root .ka-site{padding-bottom:12px}
+#kp-annotate-root article{border-top:1px solid var(--ka-line);padding:14px 0;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start}
+#kp-annotate-root article>a{flex:1;min-width:0;color:inherit;overflow-wrap:anywhere;text-decoration:none;line-height:1.6}
+#kp-annotate-root article>a:hover{text-decoration:underline;text-decoration-color:var(--ka-ink);text-underline-offset:3px}
+#kp-annotate-root article>div:not(.ka-ai-result){display:flex;gap:4px}
+#kp-annotate-root article button{font-size:12px;padding:3px 8px;min-height:30px}
+#kp-annotate-root article input[type=checkbox]{margin-top:6px}
+#kp-annotate-root .ka-ai-result{display:block;min-width:0;flex-basis:100%;background:var(--ka-surface);border:1px solid var(--ka-line);border-radius:8px;padding:12px;overflow-wrap:anywhere}
+#kp-annotate-root .ka-ai-result strong{font-size:12px;color:#426044}
+#kp-annotate-root .ka-ai-result p{margin:6px 0}
+#kp-annotate-root :is(.ka-editor,.ka-manager,.ka-codex){pointer-events:auto;width:min(560px,calc(100vw - 32px));max-height:calc(100dvh - 48px);margin:auto;padding:24px;border:0;border-radius:14px;background:var(--ka-paper);color:var(--ka-text);overflow:auto;box-shadow:var(--ka-elevation);overscroll-behavior:contain}
+#kp-annotate-root :is(.ka-editor,.ka-manager,.ka-codex)::backdrop{background:rgb(25 28 20 / .32)}
+#kp-annotate-root :is(.ka-editor,.ka-manager,.ka-codex) form{margin:0;display:block}
+#kp-annotate-root :is(.ka-editor,.ka-manager,.ka-codex) h2{font-size:20px;margin-bottom:12px}
+#kp-annotate-root label{display:grid;gap:6px;margin-top:16px;font-weight:550;font-size:13px}
+#kp-annotate-root :is(textarea,select,input:not([type=checkbox]):not([type=file])){width:100%;min-height:40px;padding:9px 10px;border:1px solid #b8bcaf;border-radius:8px;background:var(--ka-paper);font-weight:400;caret-color:var(--ka-ink)}
+#kp-annotate-root textarea{resize:vertical;line-height:1.6;min-height:100px}
+#kp-annotate-root textarea::placeholder,#kp-annotate-root input::placeholder{color:#6e7164;opacity:1}
+#kp-annotate-root input[type=checkbox]{width:16px;height:16px;accent-color:var(--ka-ink);cursor:pointer;flex-shrink:0}
+#kp-annotate-root input[type=file]{font-size:12px;width:100%;font-weight:400}
+#kp-annotate-root input::file-selector-button{font:inherit;color:var(--ka-text);border:1px solid var(--ka-line);background:var(--ka-surface);border-radius:6px;padding:6px 10px;margin-right:8px;cursor:pointer}
+#kp-annotate-root details{margin-top:16px}
+#kp-annotate-root summary{cursor:pointer;font-size:13px;color:var(--ka-muted);text-underline-offset:3px}
+#kp-annotate-root summary:hover{color:var(--ka-text)}
+#kp-annotate-root .ka-target{color:var(--ka-muted);overflow-wrap:anywhere;font-size:12px;margin:8px 0 16px}
+#kp-annotate-root .ka-refs{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+#kp-annotate-root .ka-refs canvas{max-width:120px;max-height:80px;object-fit:contain;border:1px solid var(--ka-line);border-radius:6px}
+#kp-annotate-root .ka-refs span{font-size:12px;overflow-wrap:anywhere}
+#kp-annotate-root :is(.ka-editor,.ka-manager,.ka-codex) footer{justify-content:flex-end;flex-wrap:wrap;padding:20px 0 0}
+#kp-annotate-root :is(.ka-editor-status,.ka-codex-status,.ka-manager [role=status]){font-size:13px;min-height:20px;color:var(--ka-muted)}
+#kp-annotate-root .ka-codex p{overflow-wrap:anywhere;font-size:13px}
+#kp-annotate-root .ka-codex a{color:var(--ka-ink);text-underline-offset:3px}
+#kp-annotate-root .ka-status{position:absolute;left:16px;top:16px;max-width:min(460px,calc(100vw - 32px));background:var(--ka-text);color:white;border-radius:8px;pointer-events:none;font-size:13px;box-shadow:0 4px 16px rgb(30 31 23 / .15)}
+#kp-annotate-root .ka-status:not(:empty){padding:10px 14px}
+#kp-annotate-root[data-mode=region] .ka-markers,#kp-annotate-root[data-mode=pen] .ka-markers,#kp-annotate-root[data-mode=arrow] .ka-markers,#kp-annotate-root[data-mode=region] .ka-marker,#kp-annotate-root[data-mode=pen] .ka-marker,#kp-annotate-root[data-mode=arrow] .ka-marker{pointer-events:none}
+#kp-annotate-error{position:fixed;bottom:12px;right:12px;z-index:2147483001;background:#fff;color:#252620;padding:12px}
+.ka-freeze-stage{position:fixed;inset:0;width:100vw;height:100vh;max-width:none;max-height:none;margin:0;padding:0;border:0;background:transparent;overflow:hidden;pointer-events:none}
+.ka-freeze-stage::backdrop{background:transparent}
+#kp-annotate-root .ka-frozen{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+@media(max-width:700px){#kp-annotate-root .ka-toolbar{right:8px;bottom:8px;max-width:calc(100vw - 16px);gap:2px;padding:6px}#kp-annotate-root .ka-toolbar button{min-height:36px;padding:5px 8px}#kp-annotate-root .ka-caption{padding-right:8px}#kp-annotate-root .ka-list{right:8px;width:calc(100vw - 16px);bottom:calc(var(--ka-toolbar-height) + 20px);max-height:calc(100dvh - var(--ka-toolbar-height) - 36px)}#kp-annotate-root :is(header,footer){padding:14px 16px}#kp-annotate-root .ka-list-body{padding:0 16px 16px}#kp-annotate-root :is(.ka-editor,.ka-manager,.ka-codex){padding:20px;max-height:calc(100dvh - 24px)}#kp-annotate-root .ka-bulk{gap:5px}}
+@media(prefers-reduced-motion:reduce){#kp-annotate-root button{transition:none}}
+@media(forced-colors:active){#kp-annotate-root :is(.ka-toolbar,.ka-list,.ka-editor,.ka-manager,.ka-codex){border:1px solid CanvasText}#kp-annotate-root button[aria-pressed=true]{outline:2px solid Highlight}}
