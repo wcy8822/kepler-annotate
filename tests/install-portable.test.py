@@ -15,6 +15,9 @@ sys.dont_write_bytecode = True
 SOURCE = Path(__file__).resolve().parents[1]
 EXTENSION = "abcdefghijklmnopabcdefghijklmnop"
 THREAD = "00000000-0000-4000-8000-000000000001"
+NO_THREAD_INFO = {"ok": True, "defaultThread": None, "capabilities": {
+    "taskContracts": [1, 2], "reviewTaskValidation": "structure_and_evidence",
+    "sourceBindingValidation": False, "reviewExecution": False}}
 
 
 def load(name, path):
@@ -78,7 +81,7 @@ class PortableInstallTest(unittest.TestCase):
         self.assertIsNone(config["defaultThread"])
         self.assertIsNone(config["codexPath"])
         host = self.native.Host(config)
-        self.assertEqual(host.handle({"op": "info"}), {"ok": True, "defaultThread": None})
+        self.assertEqual(host.handle({"op": "info"}), NO_THREAD_INFO)
         self.assertIsNone(host.handle({"op": "project-info", "projectId": "public-demo"})["binding"])
 
     def test_launcher_uses_installing_python_with_empty_path_and_quoted_location(self):
@@ -94,7 +97,7 @@ class PortableInstallTest(unittest.TestCase):
             self.assertEqual(manifest["allowed_origins"], ["chrome-extension://" + EXTENSION + "/"])
         result = subprocess.run([str(launcher), "chrome-extension://" + EXTENSION + "/"], input=frame({"op": "info"}), capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(decode(result.stdout), {"ok": True, "defaultThread": None})
+        self.assertEqual(decode(result.stdout), NO_THREAD_INFO)
 
     def test_explicit_codex_path_and_thread_are_preserved_without_running_codex(self):
         response = self.install("--extension-id", EXTENSION, "--codex-path", str(self.fake), "--thread", THREAD)
@@ -125,7 +128,7 @@ class PortableInstallTest(unittest.TestCase):
         for default in [None, ""]:
             with self.subTest(default=default):
                 host = self.native.Host({"defaultThread": default, "codexPath": str(self.fake), "dataRoot": str(self.root / "handoffs")})
-                self.assertEqual(host.handle({"op": "info"}), {"ok": True, "defaultThread": None})
+                self.assertEqual(host.handle({"op": "info"}), NO_THREAD_INFO)
                 result = host.handle({"op": "send"})
                 self.assertFalse(result["ok"])
                 self.assertIn("thread", result["error"].lower())

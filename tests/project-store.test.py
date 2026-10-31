@@ -88,7 +88,12 @@ class ProjectStoreTest(unittest.TestCase):
         response = self.host.handle({"op": "project-bind", "projectId": "project-1", "projectName": "项目一", "projectRoot": str(self.repo)})
         self.assertTrue(response["ok"], response)
         self.assertEqual(response["binding"], {"projectId": "project-1", "projectName": "项目一", "projectRoot": str(self.repo)})
-        self.assertEqual(self.host.handle({"op": "info"}), {"ok": True, "defaultThread": None})
+        info = self.host.handle({"op": "info"})
+        self.assertTrue(info["ok"])
+        self.assertIsNone(info["defaultThread"])
+        self.assertEqual(info["capabilities"]["taskContracts"], [1, 2])
+        self.assertFalse(info["capabilities"]["sourceBindingValidation"])
+        self.assertFalse(info["capabilities"]["reviewExecution"])
 
     def test_registry_exclude_binding_and_no_tracked_changes(self):
         exclude = self.repo / ".git/info/exclude"

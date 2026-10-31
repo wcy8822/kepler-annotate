@@ -16,6 +16,7 @@ _native = runpy.run_path(str(Path(__file__).with_name("native-host.py")))
 atomic_json = _native["atomic_json"]
 atomic_bytes = _native["atomic_bytes"]
 validate_payload = _native["validate_payload"]
+validate_review_contract = _native["validate_review_contract"]
 NOISE = {"createdAt", "updatedAt", "status", "batchId", "projectId", "projectName", "libraryRevision"}
 STATUSES = ("处理中", "待验收", "待确认", "无需修改")
 
@@ -121,6 +122,12 @@ def snapshot_hash(project, batch, tasks, markdown, images):
     return digest({"projectId": project, "batch": batch, "aiTasks": tasks, "markdown": markdown, "images": images})
 
 
+def acknowledge_task_contract(snapshot, accepted):
+    if snapshot["aiTasks"].get("schemaVersion") == 2 and (type(accepted) is not int or accepted != 2):
+        raise StoreError("读取或登记 v2 任务须显式确认 --accept-task-contract 2；确认不会解除评审执行限制",
+                         "TASK_CONTRACT_ACK_REQUIRED")
+
+
 class ProjectStore:
     def __init__(self, config):
         self.home = safe_path(identifier(config.get("dataRoot"), "dataRoot")).parent
@@ -214,6 +221,11 @@ class ProjectStore:
         markdown = read_bytes(folder / "annotations.md").decode("utf-8")
         paths = {path for item in annotations["annotations"] for path in _native["annotation_paths"](item)}
         images = {path: hashlib.sha256(read_bytes(folder / _native["safe_image_path"](path))).hexdigest() for path in paths}
+        # A valid content checksum does not establish that a review contract is valid.
+        # Pure v1 is deliberately left unchanged by this validator.
+        validate_review_contract(annotations, tasks, images)
+        if tasks.get("schemaVersion") == 2 and (annotations.get("projectId") != project or annotations.get("batchId") != batch):
+            raise StoreError("评审快照内部项目或批次身份不匹配", "CORRUPT_SNAPSHOT")
         items = item_revisions(annotations, tasks, images)
         if (meta.get("images") != images or meta.get("itemRevisions") != items
                 or snapshot_hash(project, annotations, tasks, markdown, images) != revision):
@@ -238,6 +250,9 @@ class ProjectStore:
             result = results.get(key, {}).get(revision)
             item = {"id": annotation["id"], "revision": revision, "result": result,
                     "needsWork": result is None or result["status"] not in ("待验收", "无需修改")}
+            if "approvedReview" in tasks[annotation["id"]]:
+                item["reviewGate"] = {"code": "SOURCE_VALIDATION_PENDING", "executable": False}
+                item["needsWork"] = True
             if not compact:
                 task = json.loads(json.dumps(tasks[annotation["id"]], ensure_ascii=False))
                 evidence = task["evidence"]
@@ -248,6 +263,30 @@ class ProjectStore:
             items.append(item)
         return items
 
+    def prevent_review_downgrade(self, base, project, batch, tasks):
+        unreviewed = {str(task["id"]) for task in tasks["tasks"] if "approvedReview" not in task}
+        if not unreviewed:
+            return
+        revisions = safe_path(self.batch_dir(base, batch) / "revisions")
+        if not revisions.exists():
+            return
+        # Include non-adjacent history: deleting an item and restoring its old ID
+        # must not revive a v1 result that predates its review decisions.
+        for folder in sorted(revisions.iterdir()):
+            safe_path(folder)
+            if not re.fullmatch(r"[a-f0-9]{64}", folder.name):
+                continue
+            previous_tasks = read_json(folder / "ai-tasks.json")
+            if not isinstance(previous_tasks, dict) or not isinstance(previous_tasks.get("tasks"), list):
+                raise StoreError("历史任务快照格式无效", "CORRUPT_SNAPSHOT")
+            reviewed = {str(task.get("id")) for task in previous_tasks["tasks"]
+                        if isinstance(task, dict) and "approvedReview" in task}
+            if previous_tasks.get("schemaVersion") == 2 or reviewed:
+                self.snapshot(base, project, batch, folder.name)
+                if reviewed & unreviewed:
+                    raise StoreError("已存在评审历史的条目不能删除 approvedReview；撤回须保留 withdrawn 决定",
+                                     "TASK_CONTRACT_DOWNGRADE")
+
     def sync(self, request):
         batch, tasks, markdown, decoded = validate_payload(request)
         project = identifier(batch.get("projectId"), "batch.projectId")
@@ -256,6 +295,7 @@ class ProjectStore:
             response = self.header(binding, project, batch_id)
             if binding is None:
                 return dict(response, revision=None, items=[])
+            self.prevent_review_downgrade(base, project, batch_id, tasks)
             location = directory(self.batch_dir(base, batch_id))
             revisions = directory(location / "revisions")
             images = {path: hashlib.sha256(raw).hexdigest() for path, raw in decoded.items()}
@@ -282,17 +322,22 @@ class ProjectStore:
             save_json(location / "HEAD", {"projectId": project, "batchId": batch_id, "revision": revision})
             return dict(response, revision=revision, cursor=revision, folder=str(folder), items=self.view(base, project, batch_id, snapshot, compact=True))
 
-    def read(self, project, batch, since=None, compact=False):
+    def read(self, project, batch, since=None, compact=False, accept_task_contract=None):
         identifier(batch, "batchId")
         with self.project(project) as (binding, base):
             response = self.header(binding, project, batch)
             if binding is None:
                 return dict(response, revision=None, cursor=None, items=[])
             current = self.snapshot(base, project, batch)
+            acknowledge_task_contract(current, accept_task_contract)
+            self.prevent_review_downgrade(base, project, batch, current["aiTasks"])
+            previous = None
+            if since is not None:
+                previous = self.snapshot(base, project, batch, revision_hash(since))
+                acknowledge_task_contract(previous, accept_task_contract)
             items = self.view(base, project, batch, current, compact)
             response.update(revision=current["revision"], cursor=current["revision"], folder=str(current["folder"]), items=items)
             if since is not None:
-                previous = self.snapshot(base, project, batch, revision_hash(since))
                 before, after = previous["itemRevisions"], current["itemRevisions"]
                 added = [item for item in items if str(item["id"]) not in before]
                 modified = [item for item in items if str(item["id"]) in before and before[str(item["id"])] != item["revision"]]
@@ -322,7 +367,8 @@ class ProjectStore:
                                   "cursor": snapshot["revision"], "count": len(snapshot["batch"]["annotations"])})
             return dict(response, batches=items)
 
-    def result(self, project, batch, number, revision, status, summary, branch=None, commit=None, checks=None, requirements=None):
+    def result(self, project, batch, number, revision, status, summary, branch=None, commit=None, checks=None, requirements=None,
+               accept_task_contract=None):
         revision_hash(revision)
         if not _native["safe_integer"](number) or status not in STATUSES or not isinstance(summary, str) or not summary.strip():
             raise StoreError("结果须含原编号、允许的状态与非空 summary", "INVALID_RESULT")
@@ -332,8 +378,14 @@ class ProjectStore:
             if binding is None:
                 raise StoreError("请先绑定项目", "PROJECT_NOT_BOUND")
             current = self.snapshot(base, project, batch)
+            acknowledge_task_contract(current, accept_task_contract)
+            self.prevent_review_downgrade(base, project, batch, current["aiTasks"])
             if current["itemRevisions"].get(str(number)) != revision:
                 raise StoreError("条目已删除或 revision 版本已变化，请重新读取", "STALE_ITEM_REVISION")
+            task = next(task for task in current["aiTasks"]["tasks"] if task["id"] == number)
+            if "approvedReview" in task and status in ("待验收", "无需修改"):
+                raise StoreError("评审来源绑定尚未验证，只能保留处理中或待确认；不能登记完成性结果",
+                                 "REVIEW_SOURCE_VALIDATION_PENDING")
             if status == "待验收":
                 if not isinstance(branch, str) or not branch.startswith("codex/") or not isinstance(commit, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", commit):
                     raise StoreError("待验收须有 codex/* 分支与本仓存在的 commit", "INVALID_ACCEPTANCE_EVIDENCE")
