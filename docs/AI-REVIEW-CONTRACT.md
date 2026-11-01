@@ -2,6 +2,14 @@
 
 本页描述 V1.5 阶段 A 的实际代码边界。原始 `annotations.json` 继续使用 `schemaVersion: 1`；当前浏览器和 ZIP 生成器继续输出原 v1 任务。v2 是新增的项目同步格式，尚未开放评审任务开发执行。
 
+## B1 原始来源摘要（仅纯函数，未启用）
+
+`review-source.js` 与 `review_source.py` 新增 `sourceRecord / sourceJSON / sourceHash` 与 `source_record / source_json / source_hash`。两端输入为**单条原始批注和实际图片字节计算所得的哈希表**，不读取用户数据或调用模型；返回 UTF-8 紧凑 JSON 与 SHA-256。独立合成黄金向量位于 `tests/fixtures/review-source-v1.json`，覆盖图片、非 ASCII 文件名及无图片情况。其字段顺序固定为 `schemaVersion, id, text, category, observed, expected, reproduction, shot, refs, images`；images 按路径 UTF-8 字节升序排序，每项按 `path, sha256` 顺序存储。未填 text 映射空字符串，未填分类/文本细项映射 null，未填 refs 映射空列表；其他非来源运行字段不进入摘要。
+
+来源不变量：编号为正安全整数；类别仅五类或 null；原话和细项不做 trim 或语义改写；截图必须位于 shots/，参考图位于 refs/；路径拒绝穿越、控制字符和非法扩展；哈希表键与唯一原始引用完全一致，值为 64 位小写 SHA-256。该算法**并非原有 item revision**，不得替换 `project_store.item_revisions`，不得改变历史 v1 hash。没有图片的草稿允许计算，不能因此假定有截图。
+
+这是阶段 B 的第一块独立、不可执行代码，**尚未把该摘要与 `basisSourceHash` / `appliesToSourceHash` 绑定**。它没有把 URL、元素、视口、绘图、构建版本等上下文纳入 sourceHash；此类内容必须另外定义和校验 contextHash。仅相等的摘要既不是用户确认事件，也不是 H0→H1 授权转换；可信批准事件、类别采纳、附加证据及历史撤回仍须后续实现。阶段 A 的 `SOURCE_VALIDATION_PENDING`、当前 v2 禁止执行以及 `send` 禁用保持不变。
+
 ## 版本与能力
 
 `info.capabilities` 声明 `taskContracts: [1, 2]`、`reviewTaskValidation: "structure_and_evidence"`、`sourceBindingValidation: false`、`reviewExecution: false`。这表示主机能保留并校验格式和图片关联，不表示能够验证批准来源，更不表示已内置模型。
