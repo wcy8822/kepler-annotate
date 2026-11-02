@@ -31,6 +31,15 @@ class SourceIdentityTest(unittest.TestCase):
                 self.assertNotEqual(original, source.source_hash(dict(annotation, **update), images))
         self.assertNotEqual(original, source.source_hash(annotation, {"shots/007.png": "0" * 64}))
 
+    def test_ascii_paths_and_control_bytes_regression(self):
+        # 34eec6d CI: Python regex escaping rejected ordinary ASCII screenshots.
+        annotation, images = VECTORS[0]["annotation"], VECTORS[0]["imageHashes"]
+        self.assertEqual(source.source_hash(annotation, images), VECTORS[0]["sha256"])
+        for invalid in ("shots/evil\x00.png", "shots/evil\n.png", "shots/evil\x7f.png",
+                        "shots/folder\\evil.png", "shots/../evil.png", "shots/evil.svg"):
+            with self.subTest(path=repr(invalid)), self.assertRaises(source.SourceIdentityError):
+                source.source_hash(dict(annotation, shot=invalid), {invalid: next(iter(images.values()))})
+
     def test_malformed_evidence_or_unicode_rejected(self):
         annotation, images = VECTORS[1]["annotation"], VECTORS[1]["imageHashes"]
         for hashes in ({}, dict(images, **{"refs/extra.png": "a" * 64}),

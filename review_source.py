@@ -10,7 +10,7 @@ import re
 
 _CATEGORIES = frozenset(("视觉", "文案", "交互", "产品逻辑", "反馈/建议"))
 _HASH = re.compile(r"[a-f0-9]{64}\Z")
-_IMAGE = re.compile(r"(?:shots|refs)/(?:[^\\/\\x00-\\x1f\\x7f]+/)*[^\\/\\x00-\\x1f\\x7f]+\.(?:png|jpg|jpeg|webp)\Z")
+_IMAGE = re.compile(r"(?:shots|refs)/(?:[^/\\\x00-\x1f\x7f]+/)*[^/\\\x00-\x1f\x7f]+\.(?:png|jpg|jpeg|webp)\Z")
 _MAX_ID = 2**53 - 1
 
 
