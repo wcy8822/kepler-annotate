@@ -17,6 +17,7 @@ FIXTURES = runpy.run_path(str(SOURCE / "tests/project-store.test.py"))
 payload = FIXTURES["payload"]
 PNG = FIXTURES["PNG"]
 GIT = shutil.which("git")
+SOURCE_HASH = runpy.run_path(str(SOURCE / "review_source.py"))["source_hash"]
 
 
 def review_payload(state="approved", ids=(7,)):
@@ -33,7 +34,7 @@ def review_payload(state="approved", ids=(7,)):
     if state in ("needs_confirmation", "needs_reconfirmation"):
         spec["needsConfirmation"] = ["请确认当前页面布局要求"]
     entry = {"approvalId": spec["decisionId"], "basisSourceHash": "a" * 64,
-             "appliesToSourceHash": "b" * 64, "contextHash": spec["contextHash"],
+             "appliesToSourceHash": SOURCE_HASH(annotation, {path: hashlib.sha256(PNG).hexdigest() for path in evidence}), "contextHash": spec["contextHash"],
              "sourceItemRevision": "d" * 64, "state": state, "spec": copy.deepcopy(spec)}
     data["batch"]["approvedSnapshot"] = {"schemaVersion": 1, "entries": {str(annotation["id"]): entry}}
     data["aiTasks"]["tasks"][0]["approvedReview"] = spec
@@ -90,6 +91,21 @@ class ReviewStoreTest(unittest.TestCase):
         self.assertNotIn("approvedReview", item["task"])
         self.result(item["revision"], status="无需修改")
         self.assertFalse(self.read()["items"][0]["needsWork"])
+
+    def test_h1_mismatch_rejects_sync_without_replacing_good_head(self):
+        good = self.store.sync(review_payload())
+        forged = review_payload()
+        forged["batch"]["approvedSnapshot"]["entries"]["7"]["appliesToSourceHash"] = "b" * 64
+        self.assert_error("INVALID_REVIEW_CONTRACT", self.store.sync, forged)
+        self.assertEqual(self.read(accept_task_contract=2)["revision"], good["revision"])
+
+    def test_changed_original_text_cannot_reuse_approved_h1_hash(self):
+        good = self.store.sync(review_payload())
+        changed = review_payload()
+        changed["batch"]["annotations"][0]["text"] = "新批注原话"
+        changed["aiTasks"]["tasks"][0]["rawComment"] = "新批注原话"
+        self.assert_error("INVALID_REVIEW_CONTRACT", self.store.sync, changed)
+        self.assertEqual(self.read(accept_task_contract=2)["revision"], good["revision"])
 
     def test_v2_read_and_result_require_exact_explicit_acknowledgement(self):
         response = self.store.sync(review_payload())

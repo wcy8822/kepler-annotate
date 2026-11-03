@@ -86,7 +86,8 @@
 | --- | --- | --- | --- |
 | 2026-10-31 / A | 建立实验性 v2 存储与消费保护，复用原快照和版本，不新增模型或网络权限 | 以本 PR 检查结果和下方验证记录为准 | 来源绑定、建议界面、模型接入、截图授权与实机验收 |
 | 2026-11-01 / B1 | 新增浏览器/主机同构原始来源摘要纯函数、图片指纹约束和固定黄金向量；**未接入执行门禁** | 本地隔离 Node/Python 各 3 项通过；以本 PR 最新提交 CI 为准 | H0→H1 允许转换、上下文 hash、真实用户确认事件绑定及历史追溯仍待实现 |
-| 2026-11-02 / B1 CI 修复 | 修正 Python 图片路径正则的多余转义，恢复 ASCII 截图名称接受并拒绝控制字符；加入回归用例 | 隔离 Python 4/4；公共扫描（隔离改动文件）通过；完整 CI 以新 SHA 结果为准 | H0→H1 来源验证及用户批准仍未完成，执行门禁继续关闭 |
+| 2026-11-02 / B1 CI 修复 | 修正 Python 图片路径正则的多余转义，恢复 ASCII 截图名称接受并拒绝控制字符；加入回归用例 | 该 SHA 的 GitHub Actions PR/push 均成功；Node 45/45、Python 118/118、公共扫描 51 个文本文件通过 | H0→H1 来源验证及用户批准仍未完成，执行门禁继续关闭 |
+| 2026-11-03 / B2 | Native 在 v2 同步与快照读回时用原始字段及实际图片字节验证 H1 的 `appliesToSourceHash`，伪造 hash、原话/分类/细项改写均拒绝；不动 v1 hash 和门禁 | 隔离 H1 正反例烟测通过；完整 Node/Python 与全量公共扫描以本次提交 CI 为准 | H0 历史、允许转换、contextHash、真实用户决定事件仍待验证，所有评审不可执行 |
 
 ### A 的验证记录
 
@@ -107,3 +108,9 @@
 [提交 34eec6d 的 Tests 检查](https://github.com/wcy8822/kepler-annotate/actions/runs/41318333280) 已确认失败：`npm test` 的 Python 来源摘要测试有 2 个 ERROR，`shots/007.png` 被误判为非法路径。根因为 `review_source.py` 的 raw 正则中多余反斜线转义，除误拒绝正常 ASCII 文件名外还可能接受控制字符；Node 来源测试通过，问题局限于新增 Python 来源摘要纯函数。
 
 本次只修改路径正则和 Python 回归测试，不改变既有来源指纹字段顺序、黄金 hash、v1 兼容性、项目存储、Native、CLI、Skill 或执行限制。隔离环境复现并修复后 `python3 -B tests/review-source.test.py -v` 通过 4/4，`npm run check:public` 在隔离改动文件副本通过；仓库全量 `npm test` 和 `npm run check:public` 须以新提交对应 GitHub Actions 结果复核。真实浏览器与设备未验证；`SOURCE_VALIDATION_PENDING` 和 v2 直送禁用继续生效。
+
+### B2 当前来源绑定记录（2026-11-03）
+
+继续复用 B1 的 `review_source.py`；在 `native-host.py` 的 v2 结构/图片验证之后，实际计算每条评审批注的 H1 来源 SHA-256，并比较 `appliesToSourceHash`。匹配检查位于同步和存储快照读回共同入口，单项失败拒绝整个请求。新增合成测试覆盖伪造 64 位 hash、原话与 task 同步篡改、类别及实际/预期/复现细项改写，另验证失败后 HEAD 保持原版本。B1 的旧 v1 黄金 hash 和普通条目处理仍须完整 CI 复核。
+
+这是**H1 内容一致性**而非**批准来源真实性**。H0、上下文、用户确认点击、sourceTransform 的合法性及重新确认仍未完成；继续保留 `SOURCE_VALIDATION_PENDING`、`executable:false` 和 v2 `send` 禁用，不因测试通过开放任务执行。真实 Chrome/Native 链路与用户设备尚未验收。

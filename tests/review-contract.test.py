@@ -34,7 +34,7 @@ def reviewed(state="approved"):
             "requestedChange": "使左右边界对齐", "acceptanceCriteria": ["对齐且正文不被裁切"],
             "evidenceRefs": ["shots/007.png"], "evidenceHashes": {"shots/007.png": PNG_HASH},
             "contextHash": "c" * 64, "needsConfirmation": []}
-    entry = {"approvalId": UUID, "basisSourceHash": "a" * 64, "appliesToSourceHash": "b" * 64,
+    entry = {"approvalId": UUID, "basisSourceHash": "a" * 64, "appliesToSourceHash": native._source_hash(data["batch"]["annotations"][0], {"shots/007.png": PNG_HASH}),
              "contextHash": "c" * 64, "sourceItemRevision": None, "state": state, "spec": spec}
     data["batch"]["approvedSnapshot"] = {"schemaVersion": 1, "entries": {"7": entry}}
     data["aiTasks"]["schemaVersion"] = 2
@@ -69,7 +69,34 @@ class ReviewContractTest(unittest.TestCase):
                 self.assertEqual(data, before)
         # Format-valid H0/H1 are deliberately unrelated to current data in this slice.
         # The store must keep the execution gate closed, not treat this as source approval.
-        self.assertEqual(entry(reviewed())["appliesToSourceHash"], "b" * 64)
+        self.assertEqual(entry(reviewed())["basisSourceHash"], "a" * 64)
+        self.assertNotEqual(entry(reviewed())["appliesToSourceHash"], "b" * 64)
+
+    def test_h1_hash_binds_unmodified_user_source_even_when_tasks_mirror_changes(self):
+        data = reviewed()
+        annotation = data["batch"]["annotations"][0]
+        self.assertEqual(entry(data)["appliesToSourceHash"],
+                         native._source_hash(annotation, {"shots/007.png": PNG_HASH}))
+        for field, value in (("text", "篡改的原话"), ("category", "文案"),
+                             ("observed", "伪造观察"), ("expected", "新预期"),
+                             ("reproduction", "伪造复现步骤")):
+            with self.subTest(field=field):
+                changed = reviewed()
+                changed["batch"]["annotations"][0][field] = value
+                if field == "text":
+                    changed["aiTasks"]["tasks"][0]["rawComment"] = value
+                if field == "category":
+                    changed["aiTasks"]["tasks"][0]["category"] = value
+                with self.assertRaises(native.ReviewContractError) as raised:
+                    native.validate_payload(changed)
+                self.assertEqual(raised.exception.code, "INVALID_REVIEW_CONTRACT")
+
+    def test_h1_hash_cannot_be_forged_by_a_well_formed_hex_value(self):
+        data = reviewed()
+        entry(data)["appliesToSourceHash"] = "b" * 64
+        with self.assertRaises(native.ReviewContractError) as raised:
+            native.validate_payload(data)
+        self.assertEqual(raised.exception.code, "INVALID_REVIEW_CONTRACT")
 
     def test_v1_rejects_presence_of_review_semantics_even_null(self):
         for location in ("batch", "task"):

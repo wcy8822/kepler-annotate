@@ -8,7 +8,13 @@
 
 来源不变量：编号为正安全整数；类别仅五类或 null；原话和细项不做 trim 或语义改写；截图必须位于 shots/，参考图位于 refs/；路径拒绝穿越、控制字符和非法扩展；哈希表键与唯一原始引用完全一致，值为 64 位小写 SHA-256。该算法**并非原有 item revision**，不得替换 `project_store.item_revisions`，不得改变历史 v1 hash。没有图片的草稿允许计算，不能因此假定有截图。
 
-这是阶段 B 的第一块独立、不可执行代码，**尚未把该摘要与 `basisSourceHash` / `appliesToSourceHash` 绑定**。它没有把 URL、元素、视口、绘图、构建版本等上下文纳入 sourceHash；此类内容必须另外定义和校验 contextHash。仅相等的摘要既不是用户确认事件，也不是 H0→H1 授权转换；可信批准事件、类别采纳、附加证据及历史撤回仍须后续实现。阶段 A 的 `SOURCE_VALIDATION_PENDING`、当前 v2 禁止执行以及 `send` 禁用保持不变。
+B1 首先提供独立来源纯函数；B2 已将 `appliesToSourceHash` 强制绑定当前原始批注和实际图片字节，但**尚未校验 `basisSourceHash` 所指向的 H0 历史、H0→H1 转换或用户批准事件**。它没有把 URL、元素、视口、绘图、构建版本等上下文纳入 sourceHash；此类内容必须另外定义和校验 contextHash。仅相等的摘要既不是用户确认事件，也不是 H0→H1 授权转换；可信批准事件、类别采纳、附加证据及历史撤回仍须后续实现。阶段 A 的 `SOURCE_VALIDATION_PENDING`、当前 v2 禁止执行以及 `send` 禁用保持不变。
+
+## B2 当前来源 H1 校验（仍不可执行）
+
+Native `project-sync` 与历史快照读取现调用 B1 Python 来源规范化函数，对含 `approvedReview` 的每条批注使用原始 `annotations[]` 字段及**解码或磁盘重新读取的实际图片字节 SHA-256**计算 H1，并强制匹配 `approvedSnapshot.entries[id].appliesToSourceHash`。即使任务本身的原话、类别与被篡改的批注同步变化，H1 不一致仍拒绝完整同步或读取。旧 v1 代码路径不调用此函数，不改变历史 v1 的 snapshot 或 item revision hash。
+
+仅绑定**当前来源内容**，并不证明 H0 的真实性、允许的类别采纳/新增证据、上下文与用户确认事件；`basisSourceHash` 仍未验证。 `sourceBindingValidation: false` 和 `reviewExecution: false` 不变，所有含评审条目继续 `SOURCE_VALIDATION_PENDING`，不能登记“待验收”“无需修改”，旧 v2 send 继续拒绝。验证采用虚构原话、合成图片以及失败后 HEAD 不变的回归；真实浏览器审批链路后续独立验证。
 
 ## 版本与能力
 

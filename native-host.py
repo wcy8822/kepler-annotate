@@ -24,6 +24,16 @@ IMAGE_PATH = re.compile(r"(shots|refs)/[A-Za-z0-9_][A-Za-z0-9_.-]{0,180}\.(png|j
 DATA_URL = re.compile(r"data:image/(png|jpeg|webp);base64,([A-Za-z0-9+/]*={0,2})", re.ASCII)
 REVIEW_STATES = ("approved", "needs_confirmation", "needs_reconfirmation", "withdrawn")
 
+_SOURCE_HASH_FUNCTION = None
+
+
+def _source_hash(annotation, images):
+    """Compute B1 identity lazily; isolated v1-only host copies remain usable."""
+    global _SOURCE_HASH_FUNCTION
+    if _SOURCE_HASH_FUNCTION is None:
+        _SOURCE_HASH_FUNCTION = runpy.run_path(str(Path(__file__).with_name("review_source.py")))["source_hash"]
+    return _SOURCE_HASH_FUNCTION(annotation, images)
+
 
 class ReviewContractError(ValueError):
     def __init__(self, message, code="INVALID_REVIEW_CONTRACT"):
@@ -160,6 +170,16 @@ def validate_review_contract(batch, tasks, image_hashes):
             review_hash(hashes[path])
             if image_hashes.get(path) != hashes[path]:
                 raise ReviewContractError("评审证据 hash 与实际图片不一致")
+        # B2 binds H1 to current raw source and actual image bytes. It cannot prove
+        # that H0, a claimed transformation, or a human approval event is authentic.
+        annotation = annotations[int(key)]
+        current_image_hashes = {path: image_hashes.get(path) for path in annotation_paths(annotation)}
+        try:
+            current_source_hash = _source_hash(annotation, current_image_hashes)
+        except ValueError as error:
+            raise ReviewContractError("当前批注来源摘要无效：" + str(error)) from error
+        if entry["appliesToSourceHash"] != current_source_hash:
+            raise ReviewContractError("appliesToSourceHash 与当前批注原话、分类或实际图片不一致")
 
 
 def thread_uuid(value):
