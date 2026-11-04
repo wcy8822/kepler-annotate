@@ -16,6 +16,12 @@ Native `project-sync` 与历史快照读取现调用 B1 Python 来源规范化�
 
 仅绑定**当前来源内容**，并不证明 H0 的真实性、允许的类别采纳/新增证据、上下文与用户确认事件；`basisSourceHash` 仍未验证。 `sourceBindingValidation: false` 和 `reviewExecution: false` 不变，所有含评审条目继续 `SOURCE_VALIDATION_PENDING`，不能登记“待验收”“无需修改”，旧 v2 send 继续拒绝。验证采用虚构原话、合成图片以及失败后 HEAD 不变的回归；真实浏览器审批链路后续独立验证。
 
+## B3a H0→H1 合法字段转换（仅纯函数）
+
+新增 `review-transition.js` 与 `review_transition.py`，复用 B1 来源规范化和 SHA-256，不改变 v1 历史 hash、原始任务或 Native 读写。输入是 H0/H1 两份原始批注、各自**由调用方基于实际图片字节**计算的 hash map，以及严格的声明式 `sourceTransform` 对象：`{"schemaVersion":1,"adoptedCategory":null,"addedEvidence":[]}`。类别确有改变时，adoptedCategory 必须精确等于 H1 的五类之一；未改变时须为 null。addedEvidence 按新增截图（仅 H0 没有截图时）和新参考图的附加顺序列出 `{path,sha256}`。不允许删除/替换已有图片或更改原图片字节、重新排序旧参考图，也不允许修改原编号、原话、实际、预期、复现字段。拒绝未知键、非整数 schemaVersion 和未声明追加。返回 H0/H1 独立来源 hash，供未来绑定可信历史使用。
+
+固定跨语言合成向量见 `tests/fixtures/review-transition-v1.json`，包含无操作、类别采纳、Unicode 参考图追加和首次添加截图。**本轮尚未连接 Native 的 approvedSnapshot 验证；basisSnapshot、sourceTransform、decision 仍是未信任审计资料。** 新函数不验证 H0 历史来源、用户确认手势、上下文或撤回事件，因此无执行授权意义；`SOURCE_VALIDATION_PENDING`、v2 send 拒绝和用户验收流程均不变。
+
 ## 版本与能力
 
 `info.capabilities` 声明 `taskContracts: [1, 2]`、`reviewTaskValidation: "structure_and_evidence"`、`sourceBindingValidation: false`、`reviewExecution: false`。这表示主机能保留并校验格式和图片关联，不表示能够验证批准来源，更不表示已内置模型。

@@ -88,6 +88,7 @@
 | 2026-11-01 / B1 | 新增浏览器/主机同构原始来源摘要纯函数、图片指纹约束和固定黄金向量；**未接入执行门禁** | 本地隔离 Node/Python 各 3 项通过；以本 PR 最新提交 CI 为准 | H0→H1 允许转换、上下文 hash、真实用户确认事件绑定及历史追溯仍待实现 |
 | 2026-11-02 / B1 CI 修复 | 修正 Python 图片路径正则的多余转义，恢复 ASCII 截图名称接受并拒绝控制字符；加入回归用例 | 该 SHA 的 GitHub Actions PR/push 均成功；Node 45/45、Python 118/118、公共扫描 51 个文本文件通过 | H0→H1 来源验证及用户批准仍未完成，执行门禁继续关闭 |
 | 2026-11-03 / B2 | Native 在 v2 同步与快照读回时用原始字段及实际图片字节验证 H1 的 `appliesToSourceHash`，伪造 hash、原话/分类/细项改写均拒绝；不动 v1 hash 和门禁 | 隔离 H1 正反例烟测通过；完整 Node/Python 与全量公共扫描以本次提交 CI 为准 | H0 历史、允许转换、contextHash、真实用户决定事件仍待验证，所有评审不可执行 |
+| 2026-11-04 / B3a | 新增浏览器与 Python 同构的 H0→H1 来源转换纯函数：类别采纳须显式匹配；图片仅允许按序追加且旧证据字节不变；不允许改原话、编号、观察、预期、复现或替换旧截图。**未绑定可信 H0 或真实确认事件，门禁不变** | 本轮隔离 Node 3 项与 Python 5 项通过，增量公共内容扫描通过；完整 CI 以本轮提交对应 Actions 为准 | 可信历史 H0、真实用户批准、contextHash、撤回与重新确认，以及浏览器/主机实机联调 |
 
 ### A 的验证记录
 
@@ -114,3 +115,9 @@
 继续复用 B1 的 `review_source.py`；在 `native-host.py` 的 v2 结构/图片验证之后，实际计算每条评审批注的 H1 来源 SHA-256，并比较 `appliesToSourceHash`。匹配检查位于同步和存储快照读回共同入口，单项失败拒绝整个请求。新增合成测试覆盖伪造 64 位 hash、原话与 task 同步篡改、类别及实际/预期/复现细项改写，另验证失败后 HEAD 保持原版本。B1 的旧 v1 黄金 hash 和普通条目处理仍须完整 CI 复核。
 
 这是**H1 内容一致性**而非**批准来源真实性**。H0、上下文、用户确认点击、sourceTransform 的合法性及重新确认仍未完成；继续保留 `SOURCE_VALIDATION_PENDING`、`executable:false` 和 v2 `send` 禁用，不因测试通过开放任务执行。真实 Chrome/Native 链路与用户设备尚未验收。
+
+### B3a 来源转换结构校验（2026-11-04）
+
+新增 `review-transition.js` / `review_transition.py`，复用 B1 原有 sourceRecord/sourceHash，不重写 v1 item revision。`validateTransition` / `validate_transition` 接收 H0/H1 批注、调用方计算的实际图片 SHA-256 表以及声明式 `sourceTransform`：`{schemaVersion:1, adoptedCategory:null | 五类之一, addedEvidence:[{path,sha256}]}`。仅允许明确的类别采纳和截图（原先没有时）/参考图按序追加；已存在的原话、编号、实际/预期/复现、截图、参考图和图片字节必须保持。函数返回可重算 H0/H1 hash，不能证明输入 H0 为可信历史，也不能证明 UI 用户采纳。跨语言固定合成向量位于 `tests/fixtures/review-transition-v1.json`。隔离 Node 3 项与 Python 5 项通过，局部公共内容扫描通过；GitHub 仓库全量检查及实际浏览器需要另行核验。
+
+此阶段**只增加可审阅的纯函数和回归测试**，尚未在 Native 项目同步校验中使用，不提供自证即批准通道。所有评审仍 `SOURCE_VALIDATION_PENDING`/`executable:false`；`result` 完成性回写仍拒绝，旧 v2 `send` 仍禁用。下一轮须先从不可变历史精确校验 `sourceItemRevision` 和 basis H0，再校验实际用户确认来源、contextHash 与撤回/重新确认；不因纯函数校验通过解除门禁。
