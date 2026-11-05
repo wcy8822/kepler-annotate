@@ -374,7 +374,8 @@ class ProjectStoreTest(unittest.TestCase):
         self.assertTrue((SOURCE / "kepler-annotations.py").is_file())
         scripts = self.root / "cli"
         scripts.mkdir()
-        for name in ["native-host.py", "project_store.py", "kepler-annotations.py"]:
+        for name in ["native-host.py", "project_store.py", "kepler-annotations.py",
+                     "review_source.py", "review_transition.py", "review_basis.py"]:
             shutil.copyfile(SOURCE / name, scripts / name)
         command = [sys.executable, "-B", str(scripts / "kepler-annotations.py")]
         help_result = subprocess.run(command + ["--help"], capture_output=True, text=True)

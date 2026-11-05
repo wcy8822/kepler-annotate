@@ -133,3 +133,7 @@
 ### B3b CI 隔离便携安装测试修复（2026-11-05）
 
 首次 B3b 提交 `ed9cf8e` 的 [PR CI](https://github.com/wcy8822/kepler-annotate/actions/runs/41939932500) 与 [Push CI](https://github.com/wcy8822/kepler-annotate/actions/runs/41939925965) 均失败：`tests/install-portable.test.py` 构造隔离主机时只复制旧版 4 个 Python 文件，新引入的 `review_basis.py`、`review_transition.py`、`review_source.py` 不在隔离副本中，导致 3 个便携测试 ERROR；不是来源校验失败。本轮修复测试副本的依赖清单，不弱化来源校验或修改运行时行为。新的 GitHub CI 以修复提交对应的实际结果为准。
+
+### B3b CLI 隔离副本补充修复（2026-11-05）
+
+[修复提交 `7fe4ff8` 的 PR CI](https://github.com/wcy8822/kepler-annotate/actions/runs/41940139280) 再次发现独立测试清单未同步：`tests/project-store.test.py` 的 CLI 兼容测试只复制旧的 3 个 Python 文件，导致首次 `bind` 时缺失 `review_basis.py`，该测试 1 项 FAIL。此次仅补齐 CLI 临时副本中的新增来源验证依赖，不变更 Native 逻辑、不移除测试，不把失败归因于业务功能。下一提交须重新核对自身 GitHub PR/Push CI 的完整结果。
