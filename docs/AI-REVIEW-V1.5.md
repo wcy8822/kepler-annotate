@@ -90,6 +90,8 @@
 | 2026-11-03 / B2 | Native 在 v2 同步与快照读回时用原始字段及实际图片字节验证 H1 的 `appliesToSourceHash`，伪造 hash、原话/分类/细项改写均拒绝；不动 v1 hash 和门禁 | 隔离 H1 正反例烟测通过；完整 Node/Python 与全量公共扫描以本次提交 CI 为准 | H0 历史、允许转换、contextHash、真实用户决定事件仍待验证，所有评审不可执行 |
 | 2026-11-04 / B3a | 新增浏览器与 Python 同构的 H0→H1 来源转换纯函数：类别采纳须显式匹配；图片仅允许按序追加且旧证据字节不变；不允许改原话、编号、观察、预期、复现或替换旧截图。**未绑定可信 H0 或真实确认事件，门禁不变** | 本轮隔离 Node 3 项与 Python 5 项通过，增量公共内容扫描通过；完整 CI 以本轮提交对应 Actions 为准 | 可信历史 H0、真实用户批准、contextHash、撤回与重新确认，以及浏览器/主机实机联调 |
 
+| 2026-11-05 / B3b | 通过不可变历史的精确 item revision 验证可选 sourceTransform 的 H0 批注和实际图片，并在 v2 同步前及快照读回重新计算 H0→H1；不信任提交方自带的 basisSnapshot，旧 v2 仍不可执行 | 本轮隔离纯函数烟测 1 个合法/7 个篡改拒绝通过；全量测试与公共扫描以本 SHA CI 为准 | 尚未验证真实用户采纳事件、contextHash、撤回/重新确认；保持全部评审不可执行 |
+
 ### A 的验证记录
 
 基线的 8 组 Node 单元入口与 85 个 Python 测试通过。阶段 A 最终隔离检查：`npm test` 退出码 0（8 组 Node 入口、114 项 Python 测试，其中新增契约/存储测试 29 项）；`npm run check:public` 与 `git diff --check` 均退出码 0。独立审查另行运行新增的 29 项测试，均通过。远端 CI 结果以 PR 的当前提交检查为准。
@@ -121,3 +123,9 @@
 新增 `review-transition.js` / `review_transition.py`，复用 B1 原有 sourceRecord/sourceHash，不重写 v1 item revision。`validateTransition` / `validate_transition` 接收 H0/H1 批注、调用方计算的实际图片 SHA-256 表以及声明式 `sourceTransform`：`{schemaVersion:1, adoptedCategory:null | 五类之一, addedEvidence:[{path,sha256}]}`。仅允许明确的类别采纳和截图（原先没有时）/参考图按序追加；已存在的原话、编号、实际/预期/复现、截图、参考图和图片字节必须保持。函数返回可重算 H0/H1 hash，不能证明输入 H0 为可信历史，也不能证明 UI 用户采纳。跨语言固定合成向量位于 `tests/fixtures/review-transition-v1.json`。隔离 Node 3 项与 Python 5 项通过，局部公共内容扫描通过；GitHub 仓库全量检查及实际浏览器需要另行核验。
 
 此阶段**只增加可审阅的纯函数和回归测试**，尚未在 Native 项目同步校验中使用，不提供自证即批准通道。所有评审仍 `SOURCE_VALIDATION_PENDING`/`executable:false`；`result` 完成性回写仍拒绝，旧 v2 `send` 仍禁用。下一轮须先从不可变历史精确校验 `sourceItemRevision` 和 basis H0，再校验实际用户确认来源、contextHash 与撤回/重新确认；不因纯函数校验通过解除门禁。
+
+### B3b 可信历史来源绑定（2026-11-05）
+
+在 `project_store.py` 的同一项目锁内，对明确携带 `sourceTransform` 的评审条目检索本批次不可变历史，使用历史 `itemRevisions[id]` 的**精确 item revision**（不能用批次 cursor 代替）定位尚未附加 `approvedReview` 的 H0。必须重新验证历史快照校验和、原批注及图片字节，调用 B3a 转换校验并比较 H0/H1 hash；同步失败发生在 HEAD 更新之前。新加的来源记录在读回时再次检查，历史 H0 丢失即拒绝读取和结果登记；不用请求携带的 `basisSnapshot` 替代历史。纯 v1 和未提交 sourceTransform 的阶段 A/B2 v2 仍按原逻辑处理；不把缺少 B3b 的旧 v2 当作已批准。
+
+本次只验证**来源变更与历史证据**，并不证明 UI 的真实用户确认，既不放开 `SOURCE_VALIDATION_PENDING`，也不允许完成性结果或 v2 send。已评审版本的再次确认与撤回历史将在后续单独设计，不假定可以用旧 H0 直接复用批准。

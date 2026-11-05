@@ -286,5 +286,73 @@ class ReviewStoreTest(unittest.TestCase):
             self.assertEqual(rejected["code"], "REVIEW_SOURCE_VALIDATION_PENDING")
 
 
+    def linked_review(self):
+        """Construct a synthetic opt-in review referencing a real v1 item revision."""
+        baseline = self.store.sync(payload())
+        data = review_payload()
+        record = data["batch"]["approvedSnapshot"]["entries"]["7"]
+        record["sourceItemRevision"] = baseline["items"][0]["revision"]
+        basis = payload()["batch"]["annotations"][0]
+        hashes = {name: hashlib.sha256(PNG).hexdigest() for name in [basis["shot"], *basis["refs"]]}
+        record["basisSourceHash"] = SOURCE_HASH(basis, hashes)
+        record["sourceTransform"] = {"schemaVersion": 1, "adoptedCategory": None, "addedEvidence": []}
+        return baseline, data
+
+    def test_historical_h0_revision_is_bound_but_cannot_grant_execution(self):
+        baseline, data = self.linked_review()
+        accepted = self.store.sync(data)
+        self.assertNotEqual(accepted["revision"], baseline["revision"])
+        item = self.read(accept_task_contract=2)["items"][0]
+        self.assertEqual(item["reviewGate"], {"code": "SOURCE_VALIDATION_PENDING", "executable": False})
+        self.assert_error("REVIEW_SOURCE_VALIDATION_PENDING", self.result, item["revision"],
+                          status="待验收", accept_task_contract=2)
+
+    def test_h0_mismatch_or_undeclared_changes_fail_without_changing_head(self):
+        baseline, linked = self.linked_review()
+        for mutation in ("fake_item_revision", "cursor_instead_of_item", "wrong_basis_hash",
+                         "undeclared_category", "rewritten_comment", "invalid_transform"):
+            with self.subTest(mutation=mutation):
+                data = copy.deepcopy(linked)
+                entry = data["batch"]["approvedSnapshot"]["entries"]["7"]
+                if mutation == "fake_item_revision":
+                    entry["sourceItemRevision"] = "0" * 64
+                elif mutation == "cursor_instead_of_item":
+                    entry["sourceItemRevision"] = baseline["cursor"]
+                elif mutation == "wrong_basis_hash":
+                    entry["basisSourceHash"] = "a" * 64
+                elif mutation in ("undeclared_category", "rewritten_comment"):
+                    annotation = data["batch"]["annotations"][0]
+                    task = data["aiTasks"]["tasks"][0]
+                    if mutation == "undeclared_category":
+                        annotation["category"] = "交互"
+                        task["category"] = "交互"
+                    else:
+                        annotation["text"] = "篡改后原话"
+                        task["rawComment"] = annotation["text"]
+                    hashes = {name: hashlib.sha256(PNG).hexdigest() for name in
+                              [annotation["shot"], *annotation["refs"]]}
+                    entry["appliesToSourceHash"] = SOURCE_HASH(annotation, hashes)
+                else:
+                    entry["sourceTransform"]["adoptedCategory"] = "交互"
+                expected = ("REVIEW_BASIS_NOT_FOUND" if mutation in
+                            ("fake_item_revision", "cursor_instead_of_item") else "INVALID_REVIEW_BASIS")
+                self.assert_error(expected, self.store.sync, data)
+                self.assertEqual(self.read()["revision"], baseline["revision"])
+
+    def test_missing_historical_basis_rejects_read_and_result_after_sync(self):
+        baseline, data = self.linked_review()
+        accepted = self.store.sync(data)
+        original = Path(baseline["folder"])
+        hidden = original.with_name("temporarily-hidden-" + original.name)
+        original.rename(hidden)
+        try:
+            self.assert_error("REVIEW_BASIS_NOT_FOUND", self.read, accept_task_contract=2)
+            self.assert_error("REVIEW_BASIS_NOT_FOUND", self.result,
+                              accepted["items"][0]["revision"], accept_task_contract=2)
+        finally:
+            hidden.rename(original)
+        self.assertEqual(self.read(accept_task_contract=2)["revision"], accepted["revision"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -22,6 +22,14 @@ Native `project-sync` 与历史快照读取现调用 B1 Python 来源规范化�
 
 固定跨语言合成向量见 `tests/fixtures/review-transition-v1.json`，包含无操作、类别采纳、Unicode 参考图追加和首次添加截图。**本轮尚未连接 Native 的 approvedSnapshot 验证；basisSnapshot、sourceTransform、decision 仍是未信任审计资料。** 新函数不验证 H0 历史来源、用户确认手势、上下文或撤回事件，因此无执行授权意义；`SOURCE_VALIDATION_PENDING`、v2 send 拒绝和用户验收流程均不变。
 
+## B3b 历史 H0 绑定（来源可信性，不是批准事件）
+
+当 v2 entry 明确包含 `sourceTransform` 时，项目存储在同一项目锁下将 `sourceItemRevision` 与当前项目、当前批次的不可变历史中某一条目精确匹配。仅接受该历史条目尚未附加 `approvedReview` 的 H0，不允许把批次游标、编造的 H0 或已评审的旧结果当作新确认依据。加载历史数据时重新验证快照校验和、item revision、原图片实际字节；由历史 H0 和当前 H1 运行 B3a `validate_transition`，强制两端 hash 分别匹配 entry 的 `basisSourceHash` / `appliesToSourceHash`。该检查在项目同步写入快照之前及后续快照读取时运行；H0 不存在、损坏或被撤走时保守拒绝，而不静默回退。
+
+未附 `sourceTransform` 的旧 v2 仍可被安全地存储和审阅，但**没有历史来源证明**。用户提交的 `basisSnapshot` 仅是未信任审计资料，不替代经验证的本地历史。首次批准前须有可引用的基线 item revision；已评审 H0 的重新确认不在本轮开放范围。新增错误 `REVIEW_BASIS_NOT_FOUND` 与 `INVALID_REVIEW_BASIS` 都不能绕过，需重新读取、定位有效的未评审历史并获得真实用户确认。
+
+**能力与执行门禁均未升级**：匹配历史 H0 仅说明提交的变更在结构上可追溯，不代表真实用户点击采纳，也未校验 contextHash、撤回/重放或浏览器事件来源。仍然 `sourceBindingValidation:false`、`reviewExecution:false`，所有含评审条目继续 `SOURCE_VALIDATION_PENDING` / `executable:false`，v2 send 禁用。
+
 ## 版本与能力
 
 `info.capabilities` 声明 `taskContracts: [1, 2]`、`reviewTaskValidation: "structure_and_evidence"`、`sourceBindingValidation: false`、`reviewExecution: false`。这表示主机能保留并校验格式和图片关联，不表示能够验证批准来源，更不表示已内置模型。

@@ -17,6 +17,8 @@ atomic_json = _native["atomic_json"]
 atomic_bytes = _native["atomic_bytes"]
 validate_payload = _native["validate_payload"]
 validate_review_contract = _native["validate_review_contract"]
+_review_basis = runpy.run_path(str(Path(__file__).with_name("review_basis.py")))
+validate_basis_entry = _review_basis["validate_basis_entry"]
 NOISE = {"createdAt", "updatedAt", "status", "batchId", "projectId", "projectName", "libraryRevision"}
 STATUSES = ("处理中", "待验收", "待确认", "无需修改")
 
@@ -203,7 +205,7 @@ class ProjectStore:
     def batch_dir(base, batch):
         return safe_path(base / "batches" / digest(identifier(batch, "batchId")))
 
-    def snapshot(self, base, project, batch, revision=None):
+    def snapshot(self, base, project, batch, revision=None, *, validate_basis=True):
         location = self.batch_dir(base, batch)
         if revision is None:
             head = location / "HEAD"
@@ -230,6 +232,8 @@ class ProjectStore:
         if (meta.get("images") != images or meta.get("itemRevisions") != items
                 or snapshot_hash(project, annotations, tasks, markdown, images) != revision):
             raise StoreError("快照内容校验失败；原文件保留供检查", "CORRUPT_SNAPSHOT")
+        if validate_basis:
+            self.verify_review_basis(base, project, batch, annotations, tasks, images)
         return {"revision": revision, "folder": folder, "batch": annotations, "aiTasks": tasks, "itemRevisions": items}
 
     @staticmethod
@@ -262,6 +266,58 @@ class ProjectStore:
                 item.update(rawComment=annotation.get("text", ""), category=annotation.get("category"), annotation=annotation, task=task, evidence=evidence)
             items.append(item)
         return items
+
+
+    def verify_review_basis(self, base, project, batch, annotations, tasks, images):
+        """Bind opt-in review transforms to checksum-verified unreviewed history.
+
+        Legacy v2 without sourceTransform stays readable and non-executable.
+        A matching H0/H1 is evidence of provenance, not a user approval event.
+        """
+        if tasks.get("schemaVersion") != 2:
+            return
+        entries = annotations.get("approvedSnapshot", {}).get("entries", {})
+        selected = [(key, value) for key, value in entries.items() if "sourceTransform" in value]
+        if not selected:
+            return
+        revisions = safe_path(self.batch_dir(base, batch) / "revisions")
+        if not revisions.is_dir():
+            raise StoreError("未找到可信批次历史，无法验证评审来源", "REVIEW_BASIS_NOT_FOUND")
+        current = {str(item["id"]): item for item in annotations["annotations"]}
+        for key, entry in selected:
+            source_revision = entry.get("sourceItemRevision")
+            if not isinstance(source_revision, str) or not re.fullmatch(r"[a-f0-9]{64}", source_revision):
+                raise StoreError("H0 必须引用已保存的精确 item revision", "REVIEW_BASIS_NOT_FOUND")
+            matched = False
+            for path in sorted(revisions.iterdir()):
+                safe_path(path)
+                if not re.fullmatch(r"[a-f0-9]{64}", path.name):
+                    continue
+                metadata = read_json(path / "snapshot.json")
+                revisions_map = metadata.get("itemRevisions") if isinstance(metadata, dict) else None
+                if not isinstance(revisions_map, dict) or revisions_map.get(key) != source_revision:
+                    continue
+                historical = self.snapshot(base, project, batch, path.name, validate_basis=False)
+                old_task = next((task for task in historical["aiTasks"].get("tasks", [])
+                                 if str(task.get("id")) == key), None)
+                if old_task is None or "approvedReview" in old_task:
+                    continue  # Reconfirmation from an already reviewed H0 requires a later protocol.
+                old_item = next((item for item in historical["batch"]["annotations"]
+                                 if str(item["id"]) == key), None)
+                if old_item is None or historical["itemRevisions"].get(key) != source_revision:
+                    continue
+                old_hashes = {name: hashlib.sha256(read_bytes(historical["folder"] / _native["safe_image_path"](name))).hexdigest()
+                              for name in _native["annotation_paths"](old_item)}
+                current_hashes = {name: images[name] for name in _native["annotation_paths"](current[key])}
+                try:
+                    validate_basis_entry(entry, source_revision, old_item, old_hashes, current[key], current_hashes)
+                except ValueError as error:
+                    raise StoreError("历史来源与声明的转换不一致：" + str(error), "INVALID_REVIEW_BASIS") from error
+                matched = True
+                break
+            if not matched:
+                raise StoreError("找不到匹配的未评审 H0 item revision；快照 cursor 或伪造 H0 不可代替",
+                                 "REVIEW_BASIS_NOT_FOUND")
 
     def prevent_review_downgrade(self, base, project, batch, tasks):
         unreviewed = {str(task["id"]) for task in tasks["tasks"] if "approvedReview" not in task}
@@ -299,6 +355,7 @@ class ProjectStore:
             location = directory(self.batch_dir(base, batch_id))
             revisions = directory(location / "revisions")
             images = {path: hashlib.sha256(raw).hexdigest() for path, raw in decoded.items()}
+            self.verify_review_basis(base, project, batch_id, batch, tasks, images)
             revision = snapshot_hash(project, batch, tasks, markdown, images)
             folder = safe_path(revisions / revision)
             if not folder.exists():
