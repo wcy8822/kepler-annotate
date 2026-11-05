@@ -48,7 +48,8 @@ class PortableInstallTest(unittest.TestCase):
         self.root = Path(tempfile.mkdtemp(dir=self.workspace))
         self.source = self.root / "source with spaces 'quoted'"
         self.source.mkdir()
-        for name in ["install-native-host.py", "native-host.py", "project_store.py", "kepler-annotations.py"]:
+        for name in ["install-native-host.py", "native-host.py", "project_store.py", "kepler-annotations.py",
+                     "review_source.py", "review_transition.py", "review_basis.py"]:
             shutil.copyfile(SOURCE / name, self.source / name)
         self.support = self.root / "isolated-support"
         self.installer = load("kepler_portable_installer", self.source / "install-native-host.py")

@@ -129,3 +129,7 @@
 在 `project_store.py` 的同一项目锁内，对明确携带 `sourceTransform` 的评审条目检索本批次不可变历史，使用历史 `itemRevisions[id]` 的**精确 item revision**（不能用批次 cursor 代替）定位尚未附加 `approvedReview` 的 H0。必须重新验证历史快照校验和、原批注及图片字节，调用 B3a 转换校验并比较 H0/H1 hash；同步失败发生在 HEAD 更新之前。新加的来源记录在读回时再次检查，历史 H0 丢失即拒绝读取和结果登记；不用请求携带的 `basisSnapshot` 替代历史。纯 v1 和未提交 sourceTransform 的阶段 A/B2 v2 仍按原逻辑处理；不把缺少 B3b 的旧 v2 当作已批准。
 
 本次只验证**来源变更与历史证据**，并不证明 UI 的真实用户确认，既不放开 `SOURCE_VALIDATION_PENDING`，也不允许完成性结果或 v2 send。已评审版本的再次确认与撤回历史将在后续单独设计，不假定可以用旧 H0 直接复用批准。
+
+### B3b CI 隔离便携安装测试修复（2026-11-05）
+
+首次 B3b 提交 `ed9cf8e` 的 [PR CI](https://github.com/wcy8822/kepler-annotate/actions/runs/41939932500) 与 [Push CI](https://github.com/wcy8822/kepler-annotate/actions/runs/41939925965) 均失败：`tests/install-portable.test.py` 构造隔离主机时只复制旧版 4 个 Python 文件，新引入的 `review_basis.py`、`review_transition.py`、`review_source.py` 不在隔离副本中，导致 3 个便携测试 ERROR；不是来源校验失败。本轮修复测试副本的依赖清单，不弱化来源校验或修改运行时行为。新的 GitHub CI 以修复提交对应的实际结果为准。
