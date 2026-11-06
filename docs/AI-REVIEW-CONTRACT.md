@@ -30,6 +30,12 @@ Native `project-sync` 与历史快照读取现调用 B1 Python 来源规范化�
 
 **能力与执行门禁均未升级**：匹配历史 H0 仅说明提交的变更在结构上可追溯，不代表真实用户点击采纳，也未校验 contextHash、撤回/重放或浏览器事件来源。仍然 `sourceBindingValidation:false`、`reviewExecution:false`，所有含评审条目继续 `SOURCE_VALIDATION_PENDING` / `executable:false`，v2 send 禁用。
 
+## B3c-1 决定 ID 与精确版本绑定（非用户授权）
+
+对包含 `approvedReview` 的 v2 历史，存储层检查每个 `approvalId`、`spec.decisionId` 与 **同项目同批次的条目 ID、精确 item revision、完整 entry 内容摘要**唯一对应。在 `sync` 更新 HEAD 之前检查，并在 `read/result` 时重复校验；同一决定的幂等同步及不改变该条目版本的其他批注变化允许。若想改变规格、来源、上下文或撤回 / 重新确认，必须使用新的决定标识；复用旧标识返回 `REVIEW_DECISION_REPLAY`。历史 v1 哈希与旧快照不会迁移。
+
+这里只阻止同一 ID 指向不同决定或条目版本；不能根据任意 UUID 或结构自证用户点击，也不能仅靠无序的不可变历史判断哪一个审批是最新生效状态。老主机将 HEAD 回拨至字节一致的旧决定、跨设备磁盘历史被删除、事件来源真实性等仍需后续 B3c/B3d 解决。**所有含评审条目仍 `SOURCE_VALIDATION_PENDING`、不可执行完成**；v2 直送继续禁用。
+
 ## 版本与能力
 
 `info.capabilities` 声明 `taskContracts: [1, 2]`、`reviewTaskValidation: "structure_and_evidence"`、`sourceBindingValidation: false`、`reviewExecution: false`。这表示主机能保留并校验格式和图片关联，不表示能够验证批准来源，更不表示已内置模型。

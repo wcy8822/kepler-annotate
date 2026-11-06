@@ -90,6 +90,7 @@
 | 2026-11-03 / B2 | Native 在 v2 同步与快照读回时用原始字段及实际图片字节验证 H1 的 `appliesToSourceHash`，伪造 hash、原话/分类/细项改写均拒绝；不动 v1 hash 和门禁 | 隔离 H1 正反例烟测通过；完整 Node/Python 与全量公共扫描以本次提交 CI 为准 | H0 历史、允许转换、contextHash、真实用户决定事件仍待验证，所有评审不可执行 |
 | 2026-11-04 / B3a | 新增浏览器与 Python 同构的 H0→H1 来源转换纯函数：类别采纳须显式匹配；图片仅允许按序追加且旧证据字节不变；不允许改原话、编号、观察、预期、复现或替换旧截图。**未绑定可信 H0 或真实确认事件，门禁不变** | 本轮隔离 Node 3 项与 Python 5 项通过，增量公共内容扫描通过；完整 CI 以本轮提交对应 Actions 为准 | 可信历史 H0、真实用户批准、contextHash、撤回与重新确认，以及浏览器/主机实机联调 |
 
+| 2026-11-06 / B3c-1 | 对同一批次每条评审批注锁定 `approvalId` / `decisionId` 与不可变决定内容及精确 item revision 的对应，拒绝将已用 ID 绑定到不同来源或规格；撤回与重确认必须使用新 ID；纯 v1 不受影响 | 新增合成回归；最终 npm/公共扫描和远端 CI 以本 SHA 结果为准 | 仍未校验真实浏览器用户点击、contextHash 和可信事件时间顺序；所有评审门禁继续关闭 |
 | 2026-11-05 / B3b | 通过不可变历史的精确 item revision 验证可选 sourceTransform 的 H0 批注和实际图片，并在 v2 同步前及快照读回重新计算 H0→H1；不信任提交方自带的 basisSnapshot，旧 v2 仍不可执行 | 本轮隔离纯函数烟测 1 个合法/7 个篡改拒绝通过；全量测试与公共扫描以本 SHA CI 为准 | 尚未验证真实用户采纳事件、contextHash、撤回/重新确认；保持全部评审不可执行 |
 
 ### A 的验证记录
@@ -137,3 +138,9 @@
 ### B3b CLI 隔离副本补充修复（2026-11-05）
 
 [修复提交 `7fe4ff8` 的 PR CI](https://github.com/wcy8822/kepler-annotate/actions/runs/41940139280) 再次发现独立测试清单未同步：`tests/project-store.test.py` 的 CLI 兼容测试只复制旧的 3 个 Python 文件，导致首次 `bind` 时缺失 `review_basis.py`，该测试 1 项 FAIL。此次仅补齐 CLI 临时副本中的新增来源验证依赖，不变更 Native 逻辑、不移除测试，不把失败归因于业务功能。下一提交须重新核对自身 GitHub PR/Push CI 的完整结果。
+
+### B3c-1 评审决定 ID 跨版本复用保护（2026-11-06）
+
+针对已保存在本项目批次的 v2 历史，`project_store.py` 现在按精确 item revision、完整 entry 摘要绑定 `approvalId` 与 `decisionId`。允许重复同步完全相同的决定，或同批其他条目发生不影响该 item revision 的变化；拒绝改变原话/证据/规格后复用历史决定 ID，撤回或重新确认须产生新 ID。检查在同步修改 HEAD 之前执行，并在 read/result 时防止旧主机使用相同 ID 不一致的快照。已保存历史仍原样保留。
+
+这是**ID 唯一性与变更不可抵赖检查**，并非真实用户确认事件证明；对于旧主机将 HEAD 回拨到一个字节完全相同的较旧决定、跨设备恶意删除整个历史、尚未定义的事件因果顺序，本轮不宣称防护完成。所有评审依然 `SOURCE_VALIDATION_PENDING` / `executable:false`，v2 send 不开放，实机测试仍待验证。

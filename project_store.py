@@ -319,6 +319,51 @@ class ProjectStore:
                 raise StoreError("找不到匹配的未评审 H0 item revision；快照 cursor 或伪造 H0 不可代替",
                                  "REVIEW_BASIS_NOT_FOUND")
 
+
+    def prevent_review_decision_reuse(self, base, project, batch, annotations, tasks, current_revisions):
+        """Bind each review UUID to one item revision and one immutable decision record.
+
+        A v2 format acknowledgement, matching hash, or repeated ID is never user
+        approval. Earlier snapshots may be read; changing or transplanting their
+        decision IDs is rejected before HEAD or results are updated.
+        """
+        if tasks.get("schemaVersion") != 2:
+            return
+        entries = annotations.get("approvedSnapshot", {}).get("entries", {})
+        if not entries:
+            return
+        claimed = {}
+        for key, entry in entries.items():
+            identity = (key, current_revisions[key], digest(entry))
+            for kind, value in (("approvalId", entry["approvalId"]),
+                                ("decisionId", entry["spec"]["decisionId"])):
+                slot = (kind, value)
+                if slot in claimed and claimed[slot] != identity:
+                    raise StoreError("一个评审决定 ID 不能绑定不同条目或内容", "REVIEW_DECISION_REPLAY")
+                claimed[slot] = identity
+
+        revisions = safe_path(self.batch_dir(base, batch) / "revisions")
+        if not revisions.exists():
+            return
+        for folder in sorted(revisions.iterdir()):
+            safe_path(folder)
+            if not re.fullmatch(r"[a-f0-9]{64}", folder.name):
+                continue
+            old_tasks = read_json(folder / "ai-tasks.json")
+            if not isinstance(old_tasks, dict) or old_tasks.get("schemaVersion") != 2:
+                continue
+            # Recheck disk evidence and the historical item revision; never trust
+            # a self-declared approval record without its immutable snapshot.
+            previous = self.snapshot(base, project, batch, folder.name, validate_basis=False)
+            for key, entry in previous["batch"]["approvedSnapshot"]["entries"].items():
+                identity = (key, previous["itemRevisions"][key], digest(entry))
+                for kind, value in (("approvalId", entry["approvalId"]),
+                                    ("decisionId", entry["spec"]["decisionId"])):
+                    slot = (kind, value)
+                    if slot in claimed and claimed[slot] != identity:
+                        raise StoreError("评审决定 ID 已用于其他版本；须保留原历史并生成新决定",
+                                         "REVIEW_DECISION_REPLAY")
+
     def prevent_review_downgrade(self, base, project, batch, tasks):
         unreviewed = {str(task["id"]) for task in tasks["tasks"] if "approvedReview" not in task}
         if not unreviewed:
@@ -356,6 +401,8 @@ class ProjectStore:
             revisions = directory(location / "revisions")
             images = {path: hashlib.sha256(raw).hexdigest() for path, raw in decoded.items()}
             self.verify_review_basis(base, project, batch_id, batch, tasks, images)
+            self.prevent_review_decision_reuse(base, project, batch_id, batch, tasks,
+                                               item_revisions(batch, tasks, images))
             revision = snapshot_hash(project, batch, tasks, markdown, images)
             folder = safe_path(revisions / revision)
             if not folder.exists():
@@ -388,6 +435,8 @@ class ProjectStore:
             current = self.snapshot(base, project, batch)
             acknowledge_task_contract(current, accept_task_contract)
             self.prevent_review_downgrade(base, project, batch, current["aiTasks"])
+            self.prevent_review_decision_reuse(base, project, batch, current["batch"], current["aiTasks"],
+                                               current["itemRevisions"])
             previous = None
             if since is not None:
                 previous = self.snapshot(base, project, batch, revision_hash(since))
@@ -437,6 +486,8 @@ class ProjectStore:
             current = self.snapshot(base, project, batch)
             acknowledge_task_contract(current, accept_task_contract)
             self.prevent_review_downgrade(base, project, batch, current["aiTasks"])
+            self.prevent_review_decision_reuse(base, project, batch, current["batch"], current["aiTasks"],
+                                               current["itemRevisions"])
             if current["itemRevisions"].get(str(number)) != revision:
                 raise StoreError("条目已删除或 revision 版本已变化，请重新读取", "STALE_ITEM_REVISION")
             task = next(task for task in current["aiTasks"]["tasks"] if task["id"] == number)

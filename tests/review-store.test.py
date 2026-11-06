@@ -26,7 +26,11 @@ def review_payload(state="approved", ids=(7,)):
     data["aiTasks"]["project"] = {"id": data["batch"]["projectId"]}
     annotation = data["batch"]["annotations"][0]
     evidence = [annotation["shot"], *annotation["refs"]]
-    spec = {"schemaVersion": 1, "state": state, "decisionId": "12345678-1234-4234-9234-123456789abc",
+    decision_id = "12345678-1234-4234-9234-" + {
+        "approved": "123456789abc", "needs_confirmation": "123456789abd",
+        "needs_reconfirmation": "123456789abe", "withdrawn": "123456789abf",
+    }[state]
+    spec = {"schemaVersion": 1, "state": state, "decisionId": decision_id,
             "problem": "合成卡片的按钮未对齐", "requestedChange": "按现有布局规则对齐按钮",
             "acceptanceCriteria": ["同一行按钮的起始边缘对齐"], "evidenceRefs": evidence,
             "evidenceHashes": {path: hashlib.sha256(PNG).hexdigest() for path in evidence},
@@ -106,6 +110,48 @@ class ReviewStoreTest(unittest.TestCase):
         changed["aiTasks"]["tasks"][0]["rawComment"] = "新批注原话"
         self.assert_error("INVALID_REVIEW_CONTRACT", self.store.sync, changed)
         self.assertEqual(self.read(accept_task_contract=2)["revision"], good["revision"])
+
+
+    def test_review_uuid_cannot_be_reused_for_modified_item_or_decision(self):
+        original = self.store.sync(review_payload())
+        self.assertEqual(self.store.sync(review_payload())["revision"], original["revision"])
+        changed_spec = review_payload()
+        changed_spec["batch"]["approvedSnapshot"]["entries"]["7"]["spec"]["requestedChange"] = "另一项改动"
+        changed_spec["aiTasks"]["tasks"][0]["approvedReview"]["requestedChange"] = "另一项改动"
+
+        changed_source = review_payload()
+        annotation = changed_source["batch"]["annotations"][0]
+        annotation["text"] = "另一个合成问题"
+        changed_source["aiTasks"]["tasks"][0]["rawComment"] = annotation["text"]
+        changed_source["batch"]["approvedSnapshot"]["entries"]["7"]["appliesToSourceHash"] = SOURCE_HASH(
+            annotation, {"shots/7.png": hashlib.sha256(PNG).hexdigest()})
+
+        changed_approval_id = review_payload()
+        changed_approval_id["batch"]["approvedSnapshot"]["entries"]["7"]["approvalId"] = (
+            "12345678-1234-4234-9234-123456789acd")
+        changed_decision_id = review_payload()
+        new_id = "12345678-1234-4234-9234-123456789ace"
+        changed_decision_id["batch"]["approvedSnapshot"]["entries"]["7"]["spec"]["decisionId"] = new_id
+        changed_decision_id["aiTasks"]["tasks"][0]["approvedReview"]["decisionId"] = new_id
+
+        for data in (changed_spec, changed_source, changed_approval_id, changed_decision_id):
+            with self.subTest(version=data["batch"]["approvedSnapshot"]["entries"]["7"]):
+                self.assert_error("REVIEW_DECISION_REPLAY", self.store.sync, data)
+                self.assertEqual(self.read(accept_task_contract=2)["revision"], original["revision"])
+
+    def test_same_review_survives_unrelated_batch_edits_but_withdrawal_needs_fresh_ids(self):
+        first = self.store.sync(review_payload())
+        expanded = self.store.sync(review_payload(ids=(7, 11)))
+        old = {item["id"]: item["revision"] for item in first["items"]}
+        new = {item["id"]: item["revision"] for item in expanded["items"]}
+        self.assertEqual(old[7], new[7])
+        self.assertEqual(expanded["items"][0]["reviewGate"]["executable"], False)
+
+        withdrawn = self.store.sync(review_payload(state="withdrawn", ids=(7, 11)))
+        self.assertNotEqual(withdrawn["items"][0]["revision"], new[7])
+        self.assertEqual(self.store.sync(review_payload(state="withdrawn", ids=(7, 11)))["revision"],
+                         withdrawn["revision"])
+        self.assertFalse(self.read(accept_task_contract=2)["items"][0]["reviewGate"]["executable"])
 
     def test_v2_read_and_result_require_exact_explicit_acknowledgement(self):
         response = self.store.sync(review_payload())
