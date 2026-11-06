@@ -148,3 +148,5 @@
 ### B3c-1 CI 合成测试路径修复（2026-11-06）
 
 首提交 `6c8153e` 的 [Push CI](https://github.com/wcy8822/kepler-annotate/actions/runs/42136130296) 与 [PR CI](https://github.com/wcy8822/kepler-annotate/actions/runs/42136135656) 因新增测试将截图写死为 `shots/7.png` 而报 1 个 ERROR；真实测试夹具的图片路径由批注字段给出。修复仅使合成测试动态读取 `annotation['shot']`，不改来源校验或执行门禁；本 SHA 的回归状态以新的 GitHub Actions 为准。
+
+补充 CI 复核：提交 `b89b51e` 仍失败，合成夹具还包含 `refs` 参考图，而此前仅计算了 `shot` 的 hash。现将测试来源 hash 输入改为根据批注的截图加全部参考图生成，与真实 `source_record` 的严格集合校验保持一致；不修改业务校验逻辑。最终结果以本修复 SHA 的 CI 为准。
