@@ -144,3 +144,7 @@
 针对已保存在本项目批次的 v2 历史，`project_store.py` 现在按精确 item revision、完整 entry 摘要绑定 `approvalId` 与 `decisionId`。允许重复同步完全相同的决定，或同批其他条目发生不影响该 item revision 的变化；拒绝改变原话/证据/规格后复用历史决定 ID，撤回或重新确认须产生新 ID。检查在同步修改 HEAD 之前执行，并在 read/result 时防止旧主机使用相同 ID 不一致的快照。已保存历史仍原样保留。
 
 这是**ID 唯一性与变更不可抵赖检查**，并非真实用户确认事件证明；对于旧主机将 HEAD 回拨到一个字节完全相同的较旧决定、跨设备恶意删除整个历史、尚未定义的事件因果顺序，本轮不宣称防护完成。所有评审依然 `SOURCE_VALIDATION_PENDING` / `executable:false`，v2 send 不开放，实机测试仍待验证。
+
+### B3c-1 CI 合成测试路径修复（2026-11-06）
+
+首提交 `6c8153e` 的 [Push CI](https://github.com/wcy8822/kepler-annotate/actions/runs/42136130296) 与 [PR CI](https://github.com/wcy8822/kepler-annotate/actions/runs/42136135656) 因新增测试将截图写死为 `shots/7.png` 而报 1 个 ERROR；真实测试夹具的图片路径由批注字段给出。修复仅使合成测试动态读取 `annotation['shot']`，不改来源校验或执行门禁；本 SHA 的回归状态以新的 GitHub Actions 为准。

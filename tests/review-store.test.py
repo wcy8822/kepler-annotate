@@ -124,7 +124,7 @@ class ReviewStoreTest(unittest.TestCase):
         annotation["text"] = "另一个合成问题"
         changed_source["aiTasks"]["tasks"][0]["rawComment"] = annotation["text"]
         changed_source["batch"]["approvedSnapshot"]["entries"]["7"]["appliesToSourceHash"] = SOURCE_HASH(
-            annotation, {"shots/7.png": hashlib.sha256(PNG).hexdigest()})
+            annotation, {annotation["shot"]: hashlib.sha256(PNG).hexdigest()})
 
         changed_approval_id = review_payload()
         changed_approval_id["batch"]["approvedSnapshot"]["entries"]["7"]["approvalId"] = (
