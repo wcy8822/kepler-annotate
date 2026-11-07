@@ -36,6 +36,12 @@ Native `project-sync` 与历史快照读取现调用 B1 Python 来源规范化�
 
 这里只阻止同一 ID 指向不同决定或条目版本；不能根据任意 UUID 或结构自证用户点击，也不能仅靠无序的不可变历史判断哪一个审批是最新生效状态。老主机将 HEAD 回拨至字节一致的旧决定、跨设备磁盘历史被删除、事件来源真实性等仍需后续 B3c/B3d 解决。**所有含评审条目仍 `SOURCE_VALIDATION_PENDING`、不可执行完成**；v2 直送继续禁用。
 
+## B3c-2 可选的上下文快照一致性校验（2026-11-07）
+
+对明确使用 `contextSnapshot.kind = "annotation-context-v1"` 的 v2 审计记录，Native 在同步和历史快照读取时，从同一条原始批注重新投影 `schemaVersion,kind,id,url,pageKey,title,mode,elements,rect,shapes,viewport,build`，并以 `json.dumps(ensure_ascii=False,allow_nan=False,sort_keys=True,separators=(",",":"))` 的 UTF-8 字节计算 SHA-256，匹配 `entry.contextHash` 与 `spec.contextHash`。任一页面元数据、元素线索或几何字段变化而未重新绑定时，拒绝整个 v2 快照；经校验的值来自当前批注，不信任单独提交的 contextSnapshot 文本。旧的无 kind 审计对象按既有协议保留但仍**完全不具备批准效力**，不能因为存在任意 contextHash 而开放执行。
+
+这只是**本地数据一致性**：没有验证网页本身真实性、用户点击、浏览器权限或截图传输授权；完整 URL 及元素线索可能含敏感信息，严格只留在本机，不进入公开仓库或默认外发。v1 数据和黄金 hash 不改，所有含评审条目仍 `SOURCE_VALIDATION_PENDING` / `executable:false`，v2 send 禁用。未来编辑器必须按同一规范计算并在用户明确采纳后建立可信事件链，才能讨论执行权限。
+
 ## 版本与能力
 
 `info.capabilities` 声明 `taskContracts: [1, 2]`、`reviewTaskValidation: "structure_and_evidence"`、`sourceBindingValidation: false`、`reviewExecution: false`。这表示主机能保留并校验格式和图片关联，不表示能够验证批准来源，更不表示已内置模型。

@@ -35,6 +35,47 @@ def _source_hash(annotation, images):
     return _SOURCE_HASH_FUNCTION(annotation, images)
 
 
+
+# B3c-2: optional context identity. Presence is evidence consistency only,
+# never proof of a user's click, approval or execution permission.
+CONTEXT_FIELDS = ("url", "pageKey", "title", "mode", "elements", "rect", "shapes", "viewport", "build")
+
+
+def context_projection(annotation):
+    if not isinstance(annotation, dict) or not safe_integer(annotation.get("id")):
+        raise ValueError("context id must be a safe positive integer")
+    record = {"schemaVersion": 1, "kind": "annotation-context-v1", "id": annotation["id"]}
+    for field in CONTEXT_FIELDS:
+        value = annotation.get(field, [] if field in ("elements", "shapes") else None)
+        if field in ("elements", "shapes"):
+            if not isinstance(value, list):
+                raise ValueError("context lists must be arrays")
+        elif field in ("rect", "viewport"):
+            if value is not None and not isinstance(value, dict):
+                raise ValueError("context geometry must be objects or null")
+        elif value is not None and not isinstance(value, str):
+            raise ValueError("context metadata must be text or null")
+        record[field] = value
+    return record
+
+
+def context_json(value):
+    return json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
+
+
+def verify_context_snapshot(annotation, context, declared_hash):
+    """Verify a frozen context against the current annotation; not an approval."""
+    try:
+        expected = context_json(context_projection(annotation))
+        actual = context_json(context)
+        if len(actual.encode("utf-8")) > 32768 or actual != expected:
+            raise ValueError("context snapshot differs from original annotation")
+        if hashlib.sha256(actual.encode("utf-8")).hexdigest() != declared_hash:
+            raise ValueError("context hash differs from actual context evidence")
+    except (UnicodeError, TypeError, OverflowError, RecursionError) as exc:
+        raise ValueError("invalid context representation") from exc
+
+
 class ReviewContractError(ValueError):
     def __init__(self, message, code="INVALID_REVIEW_CONTRACT"):
         super().__init__(message)
@@ -141,6 +182,15 @@ def validate_review_contract(batch, tasks, image_hashes):
                     raise ReviewContractError("评审审计材料须为有限 JSON 对象") from None
                 if size > 32768:
                     raise ReviewContractError("单项评审审计材料超过 32KB")
+        if "contextSnapshot" in entry and "kind" in entry["contextSnapshot"]:
+            # Existing opaque pre-B3c-2 audit data remains non-authoritative.
+            # New versioned context must match current raw annotation and hash.
+            if entry["contextSnapshot"].get("kind") != "annotation-context-v1":
+                raise ReviewContractError("unknown versioned context snapshot")
+            try:
+                verify_context_snapshot(annotations[int(key)], entry["contextSnapshot"], entry["contextHash"])
+            except ValueError as error:
+                raise ReviewContractError("context snapshot is not bound to current evidence: " + str(error)) from error
         spec = entry["spec"]
         review_object(spec, ("schemaVersion", "state", "decisionId", "problem", "requestedChange", "acceptanceCriteria",
                              "evidenceRefs", "evidenceHashes", "contextHash", "needsConfirmation"))

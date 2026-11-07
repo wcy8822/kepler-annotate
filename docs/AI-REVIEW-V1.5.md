@@ -93,6 +93,8 @@
 | 2026-11-06 / B3c-1 | 对同一批次每条评审批注锁定 `approvalId` / `decisionId` 与不可变决定内容及精确 item revision 的对应，拒绝将已用 ID 绑定到不同来源或规格；撤回与重确认必须使用新 ID；纯 v1 不受影响 | 新增合成回归；最终 npm/公共扫描和远端 CI 以本 SHA 结果为准 | 仍未校验真实浏览器用户点击、contextHash 和可信事件时间顺序；所有评审门禁继续关闭 |
 | 2026-11-05 / B3b | 通过不可变历史的精确 item revision 验证可选 sourceTransform 的 H0 批注和实际图片，并在 v2 同步前及快照读回重新计算 H0→H1；不信任提交方自带的 basisSnapshot，旧 v2 仍不可执行 | 本轮隔离纯函数烟测 1 个合法/7 个篡改拒绝通过；全量测试与公共扫描以本 SHA CI 为准 | 尚未验证真实用户采纳事件、contextHash、撤回/重新确认；保持全部评审不可执行 |
 
+| 2026-11-07 / B3c-2 | 对显式 versioned `annotation-context-v1` 的 v2 contextSnapshot 增加 Native 原始批注上下文投影、SHA-256 校验，阻止改页面线索/元素/视口而沿用旧上下文 hash；旧 opaque 记录保持不可执行 | 隔离合成 smoke checks 通过；本 SHA 的完整 Node/Python 测试和公共内容扫描以 GitHub CI 为准 | 尚不能证明用户真实采纳、事件顺序或图片发送授权；所有评审仍不可执行 |
+
 ### A 的验证记录
 
 基线的 8 组 Node 单元入口与 85 个 Python 测试通过。阶段 A 最终隔离检查：`npm test` 退出码 0（8 组 Node 入口、114 项 Python 测试，其中新增契约/存储测试 29 项）；`npm run check:public` 与 `git diff --check` 均退出码 0。独立审查另行运行新增的 29 项测试，均通过。远端 CI 结果以 PR 的当前提交检查为准。
@@ -150,3 +152,8 @@
 首提交 `6c8153e` 的 [Push CI](https://github.com/wcy8822/kepler-annotate/actions/runs/42136130296) 与 [PR CI](https://github.com/wcy8822/kepler-annotate/actions/runs/42136135656) 因新增测试将截图写死为 `shots/7.png` 而报 1 个 ERROR；真实测试夹具的图片路径由批注字段给出。修复仅使合成测试动态读取 `annotation['shot']`，不改来源校验或执行门禁；本 SHA 的回归状态以新的 GitHub Actions 为准。
 
 补充 CI 复核：提交 `b89b51e` 仍失败，合成夹具还包含 `refs` 参考图，而此前仅计算了 `shot` 的 hash。现将测试来源 hash 输入改为根据批注的截图加全部参考图生成，与真实 `source_record` 的严格集合校验保持一致；不修改业务校验逻辑。最终结果以本修复 SHA 的 CI 为准。
+
+### B3c-2 版本化上下文绑定（2026-11-07）
+
+新增可选的 `annotation-context-v1` 源上下文规范：原始批注的 URL、页面线索、元素、矩形、形状、视口、构建版本等通过稳定 JSON 投影及 SHA-256 绑定 `contextHash`。Native 在 v2 接收及快照读回时拒绝版本化声明与原始数据不一致；旧无版本标记的审计对象不会获得新校验能力，也从未视为授权。新增合成正反例测试，保持旧 v1 兼容和评审执行门禁；未进行真实浏览器或用户手势验证。
+

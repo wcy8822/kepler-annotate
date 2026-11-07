@@ -52,6 +52,45 @@ def set_spec(data, field, value):
 
 
 class ReviewContractTest(unittest.TestCase):
+    def test_versioned_context_hash_binds_raw_page_evidence_without_approving(self):
+        data = reviewed()
+        annotation = data["batch"]["annotations"][0]
+        annotation.update(url="https://example.test/synthetic?filter=1", title="合成页面",
+                          elements=[{"tag": "button", "text": "确认"}])
+        snapshot = native.context_projection(annotation)
+        value = hashlib.sha256(native.context_json(snapshot).encode("utf-8")).hexdigest()
+        entry(data)["contextSnapshot"] = snapshot
+        entry(data)["contextHash"] = value
+        set_spec(data, "contextHash", value)
+        before = copy.deepcopy(data)
+        native.validate_payload(data)
+        self.assertEqual(before, data)
+        for mutation in ("raw_title", "raw_url", "raw_elements", "claimed_hash", "claimed_snapshot", "bad_kind"):
+            with self.subTest(mutation=mutation):
+                changed = copy.deepcopy(data)
+                if mutation == "raw_title":
+                    changed["batch"]["annotations"][0]["title"] = "未经确认的新页面"
+                elif mutation == "raw_url":
+                    changed["batch"]["annotations"][0]["url"] = "https://example.test/another"
+                elif mutation == "raw_elements":
+                    changed["batch"]["annotations"][0]["elements"][0]["text"] = "其他"
+                elif mutation == "claimed_hash":
+                    entry(changed)["contextHash"] = "d" * 64
+                    set_spec(changed, "contextHash", "d" * 64)
+                elif mutation == "claimed_snapshot":
+                    entry(changed)["contextSnapshot"]["title"] = "伪造页面"
+                else:
+                    entry(changed)["contextSnapshot"]["kind"] = "model-authorized"
+                with self.assertRaises(native.ReviewContractError):
+                    native.validate_payload(changed)
+
+    def test_legacy_context_audit_does_not_gain_authority(self):
+        data = reviewed()
+        entry(data)["contextSnapshot"] = {"legacyAudit": "non-authoritative"}
+        native.validate_payload(data)
+        self.assertNotEqual(entry(data)["contextHash"], hashlib.sha256(
+            native.context_json(entry(data)["contextSnapshot"]).encode("utf-8")).hexdigest())
+
     def test_v1_validation_does_not_mutate_or_add_review_fields(self):
         data = payload()
         before = copy.deepcopy(data)
