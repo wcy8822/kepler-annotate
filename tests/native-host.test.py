@@ -21,6 +21,8 @@ SOURCE = Path(__file__).resolve().parents[1]
 EXTENSION = "abcdefghijklmnopabcdefghijklmnop"
 THREAD = "00000000-0000-4000-8000-000000000001"
 OTHER_THREAD = "00000000-0000-4000-8000-000000000002"
+CAPABILITIES = {"taskContracts": [1, 2], "reviewTaskValidation": "structure_and_evidence",
+                "sourceBindingValidation": False, "reviewExecution": False}
 PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jf1sAAAAASUVORK5CYII=")
 DATA = "data:image/png;base64," + base64.b64encode(PNG).decode()
 
@@ -101,12 +103,12 @@ print("queued")
         return self.host.handle(copy.deepcopy(data))
 
     def test_info_and_default_thread(self):
-        self.assertEqual(self.invoke({"op": "info"}), {"ok": True, "defaultThread": THREAD})
+        self.assertEqual(self.invoke({"op": "info"}), {"ok": True, "defaultThread": THREAD, "capabilities": CAPABILITIES})
         data = payload()
         del data["threadId"]
         self.assertEqual(self.invoke(data)["threadId"], THREAD)
         self.host = self.module.Host(dict(self.config, defaultThread=None))
-        self.assertEqual(self.invoke({"op": "info"}), {"ok": True, "defaultThread": None})
+        self.assertEqual(self.invoke({"op": "info"}), {"ok": True, "defaultThread": None, "capabilities": CAPABILITIES})
         explicit = payload()
         explicit["threadId"] = OTHER_THREAD
         queued = self.invoke(explicit)
@@ -294,7 +296,7 @@ print("queued")
     def test_info_uses_installed_thread_and_does_not_write_data(self):
         with patch.dict(os.environ, {"CODEX_THREAD_ID": OTHER_THREAD}):
             result = self.invoke({"op": "info"})
-        self.assertEqual(result, {"ok": True, "defaultThread": THREAD})
+        self.assertEqual(result, {"ok": True, "defaultThread": THREAD, "capabilities": CAPABILITIES})
         self.assertFalse(Path(self.config["dataRoot"]).exists())
 
     def test_installer_preserves_existing_application_support_permissions(self):
@@ -365,7 +367,7 @@ print("queued")
         replies = frames(output.getvalue())
         self.assertEqual(len(replies), 3)
         self.assertFalse(replies[0]["ok"])
-        self.assertEqual(replies[1], {"ok": True, "defaultThread": THREAD})
+        self.assertEqual(replies[1], {"ok": True, "defaultThread": THREAD, "capabilities": CAPABILITIES})
         self.assertEqual(replies[2]["state"], "queued")
 
     def test_truncated_and_oversized_frames(self):
@@ -429,7 +431,7 @@ print("queued")
         cli = subprocess.run([str(source / "native-host-launcher"), "chrome-extension://" + "a" * 32 + "/"], input=frame({"op": "info"}) + frame(payload()), capture_output=True, env=environment)
         self.assertEqual(cli.returncode, 0, cli.stderr)
         replies = frames(cli.stdout)
-        self.assertEqual(replies[0], {"ok": True, "defaultThread": OTHER_THREAD})
+        self.assertEqual(replies[0], {"ok": True, "defaultThread": OTHER_THREAD, "capabilities": CAPABILITIES})
         self.assertTrue(replies[1]["ok"], replies)
         self.assertEqual(self.calls()[0][2], THREAD)
 

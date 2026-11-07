@@ -88,7 +88,12 @@ class ProjectStoreTest(unittest.TestCase):
         response = self.host.handle({"op": "project-bind", "projectId": "project-1", "projectName": "项目一", "projectRoot": str(self.repo)})
         self.assertTrue(response["ok"], response)
         self.assertEqual(response["binding"], {"projectId": "project-1", "projectName": "项目一", "projectRoot": str(self.repo)})
-        self.assertEqual(self.host.handle({"op": "info"}), {"ok": True, "defaultThread": None})
+        info = self.host.handle({"op": "info"})
+        self.assertTrue(info["ok"])
+        self.assertIsNone(info["defaultThread"])
+        self.assertEqual(info["capabilities"]["taskContracts"], [1, 2])
+        self.assertFalse(info["capabilities"]["sourceBindingValidation"])
+        self.assertFalse(info["capabilities"]["reviewExecution"])
 
     def test_registry_exclude_binding_and_no_tracked_changes(self):
         exclude = self.repo / ".git/info/exclude"
@@ -369,7 +374,8 @@ class ProjectStoreTest(unittest.TestCase):
         self.assertTrue((SOURCE / "kepler-annotations.py").is_file())
         scripts = self.root / "cli"
         scripts.mkdir()
-        for name in ["native-host.py", "project_store.py", "kepler-annotations.py"]:
+        for name in ["native-host.py", "project_store.py", "kepler-annotations.py",
+                     "review_source.py", "review_transition.py", "review_basis.py"]:
             shutil.copyfile(SOURCE / name, scripts / name)
         command = [sys.executable, "-B", str(scripts / "kepler-annotations.py")]
         help_result = subprocess.run(command + ["--help"], capture_output=True, text=True)

@@ -14,6 +14,7 @@ import struct
 import subprocess
 import sys
 import uuid
+from urllib.parse import quote
 
 MAX_FRAME = 64 * 1024 * 1024
 MAX_RESPONSE = 1024 * 1024
@@ -21,6 +22,214 @@ QUEUE_TIMEOUT = 30
 MAX_SAFE_INTEGER = 2**53 - 1
 IMAGE_PATH = re.compile(r"(shots|refs)/[A-Za-z0-9_][A-Za-z0-9_.-]{0,180}\.(png|jpg|jpeg|webp)", re.ASCII)
 DATA_URL = re.compile(r"data:image/(png|jpeg|webp);base64,([A-Za-z0-9+/]*={0,2})", re.ASCII)
+REVIEW_STATES = ("approved", "needs_confirmation", "needs_reconfirmation", "withdrawn")
+
+_SOURCE_HASH_FUNCTION = None
+
+
+def _source_hash(annotation, images):
+    """Compute B1 identity lazily; isolated v1-only host copies remain usable."""
+    global _SOURCE_HASH_FUNCTION
+    if _SOURCE_HASH_FUNCTION is None:
+        _SOURCE_HASH_FUNCTION = runpy.run_path(str(Path(__file__).with_name("review_source.py")))["source_hash"]
+    return _SOURCE_HASH_FUNCTION(annotation, images)
+
+
+
+# B3c-2: optional context identity. Presence is evidence consistency only,
+# never proof of a user's click, approval or execution permission.
+CONTEXT_FIELDS = ("url", "pageKey", "title", "mode", "elements", "rect", "shapes", "viewport", "build")
+
+
+def context_projection(annotation):
+    if not isinstance(annotation, dict) or not safe_integer(annotation.get("id")):
+        raise ValueError("context id must be a safe positive integer")
+    record = {"schemaVersion": 1, "kind": "annotation-context-v1", "id": annotation["id"]}
+    for field in CONTEXT_FIELDS:
+        value = annotation.get(field, [] if field in ("elements", "shapes") else None)
+        if field in ("elements", "shapes"):
+            if not isinstance(value, list):
+                raise ValueError("context lists must be arrays")
+        elif field in ("rect", "viewport"):
+            if value is not None and not isinstance(value, dict):
+                raise ValueError("context geometry must be objects or null")
+        elif value is not None and not isinstance(value, str):
+            raise ValueError("context metadata must be text or null")
+        record[field] = value
+    return record
+
+
+def context_json(value):
+    return json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
+
+
+def verify_context_snapshot(annotation, context, declared_hash):
+    """Verify a frozen context against the current annotation; not an approval."""
+    try:
+        expected = context_json(context_projection(annotation))
+        actual = context_json(context)
+        if len(actual.encode("utf-8")) > 32768 or actual != expected:
+            raise ValueError("context snapshot differs from original annotation")
+        if hashlib.sha256(actual.encode("utf-8")).hexdigest() != declared_hash:
+            raise ValueError("context hash differs from actual context evidence")
+    except (UnicodeError, TypeError, OverflowError, RecursionError) as exc:
+        raise ValueError("invalid context representation") from exc
+
+
+class ReviewContractError(ValueError):
+    def __init__(self, message, code="INVALID_REVIEW_CONTRACT"):
+        super().__init__(message)
+        self.code = code
+
+
+def review_object(value, required, optional=()):
+    if not isinstance(value, dict) or not set(required) <= set(value) or set(value) - set(required) - set(optional):
+        raise ReviewContractError("评审对象字段缺失或包含未知字段")
+
+
+def review_hash(value):
+    if not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{64}", value):
+        raise ReviewContractError("评审 hash 须为小写 SHA-256")
+
+
+def review_uuid(value):
+    if not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", value):
+        raise ReviewContractError("评审决定 ID 须为规范 UUID")
+
+
+def review_text(value, maximum, required=False):
+    if not isinstance(value, str) or len(value) > maximum or (required and not value.strip()):
+        raise ReviewContractError("评审正文为空、类型无效或超出长度限制")
+
+
+def review_text_list(value):
+    if not isinstance(value, list) or len(value) > 8:
+        raise ReviewContractError("评审检查项须为最多 8 项的文本数组")
+    for item in value:
+        review_text(item, 600, required=True)
+
+
+def validate_review_contract(batch, tasks, image_hashes):
+    """校验 v2 的结构和证据关联；不验证来源 H0→H1，不授权开发执行。"""
+    if not isinstance(batch, dict) or not isinstance(tasks, dict) or not isinstance(tasks.get("tasks"), list):
+        raise ReviewContractError("批次和任务格式无效")
+    version = tasks.get("schemaVersion")
+    if type(version) is not int or version not in (1, 2):
+        raise ReviewContractError("AI 任务契约仅支持 1 或 2", "UNSUPPORTED_TASK_CONTRACT")
+    has_review = "approvedSnapshot" in batch or any(isinstance(task, dict) and "approvedReview" in task for task in tasks["tasks"])
+    if version == 1:
+        if has_review:
+            raise ReviewContractError("评审语义不能伪装为任务契约 1", "TASK_CONTRACT_DOWNGRADE")
+        return
+
+    # This branch is also used when reading immutable snapshots from disk.
+    if (type(batch.get("schemaVersion")) is not int or batch["schemaVersion"] != 1
+            or not isinstance(batch.get("projectId"), str) or not batch["projectId"].strip()
+            or not isinstance(batch.get("batchId"), str) or not batch["batchId"].strip()
+            or not safe_integer(batch.get("nextId")) or not isinstance(batch.get("annotations"), list)
+            or not isinstance(tasks.get("project"), dict) or tasks["project"].get("id") != batch["projectId"]
+            or not isinstance(tasks.get("batch"), dict) or tasks["batch"].get("id") != batch["batchId"]):
+        raise ReviewContractError("评审任务须绑定原始项目与批次")
+    annotations = {}
+    for annotation in batch["annotations"]:
+        if (not isinstance(annotation, dict) or not safe_integer(annotation.get("id"))
+                or annotation["id"] >= batch["nextId"] or annotation["id"] in annotations
+                or not isinstance(annotation.get("text", ""), str)
+                or not isinstance(annotation.get("category"), (str, type(None)))):
+            raise ReviewContractError("评审批注编号、原话或类别无效")
+        annotations[annotation["id"]] = annotation
+    task_map = {}
+    for task in tasks["tasks"]:
+        if (not isinstance(task, dict) or not safe_integer(task.get("id"))
+                or task["id"] not in annotations or task["id"] in task_map):
+            raise ReviewContractError("评审任务编号须与原批注逐项对应")
+        annotation = annotations[task["id"]]
+        evidence = task.get("evidence")
+        expected_key = ":".join(quote(str(value), safe="~()*!.'-") for value in (batch["projectId"], batch["batchId"], task["id"]))
+        if (task.get("key") != expected_key or task.get("rawComment") != annotation.get("text", "")
+                or task.get("category") != annotation.get("category") or not isinstance(evidence, dict)
+                or evidence.get("screenshot") != annotation.get("shot")
+                or evidence.get("references", []) != annotation.get("refs", [])):
+            raise ReviewContractError("评审任务须保留稳定 key、原话、类别和图片关联")
+        annotation_paths(annotation)
+        task_map[task["id"]] = task
+    if set(task_map) != set(annotations):
+        raise ReviewContractError("评审任务缺少原批注编号")
+    snapshot = batch.get("approvedSnapshot")
+    review_object(snapshot, ("schemaVersion", "entries"))
+    if type(snapshot["schemaVersion"]) is not int or snapshot["schemaVersion"] != 1:
+        raise ReviewContractError("approvedSnapshot.schemaVersion 须为 1")
+    entries = snapshot["entries"]
+    reviewed = {str(number) for number, task in task_map.items() if "approvedReview" in task}
+    if not isinstance(entries, dict) or not entries or set(entries) != reviewed:
+        raise ReviewContractError("评审快照须与含 approvedReview 的任务逐项对应")
+    for key, entry in entries.items():
+        review_object(entry, ("approvalId", "basisSourceHash", "appliesToSourceHash", "contextHash", "sourceItemRevision", "state", "spec"),
+                      ("contextSnapshot", "basisSnapshot", "sourceTransform", "decision"))
+        review_uuid(entry["approvalId"])
+        for field in ("basisSourceHash", "appliesToSourceHash", "contextHash"):
+            review_hash(entry[field])
+        if entry["sourceItemRevision"] is not None:
+            review_hash(entry["sourceItemRevision"])
+        # Optional audit objects are opaque bounded data in this increment, never authority.
+        for field in ("contextSnapshot", "basisSnapshot", "sourceTransform", "decision"):
+            if field in entry:
+                if not isinstance(entry[field], dict):
+                    raise ReviewContractError("评审审计材料须为对象")
+                try:
+                    size = len(json.dumps(entry[field], ensure_ascii=False, allow_nan=False).encode("utf-8"))
+                except (ValueError, TypeError, RecursionError):
+                    raise ReviewContractError("评审审计材料须为有限 JSON 对象") from None
+                if size > 32768:
+                    raise ReviewContractError("单项评审审计材料超过 32KB")
+        if "contextSnapshot" in entry and "kind" in entry["contextSnapshot"]:
+            # Existing opaque pre-B3c-2 audit data remains non-authoritative.
+            # New versioned context must match current raw annotation and hash.
+            if entry["contextSnapshot"].get("kind") != "annotation-context-v1":
+                raise ReviewContractError("unknown versioned context snapshot")
+            try:
+                verify_context_snapshot(annotations[int(key)], entry["contextSnapshot"], entry["contextHash"])
+            except ValueError as error:
+                raise ReviewContractError("context snapshot is not bound to current evidence: " + str(error)) from error
+        spec = entry["spec"]
+        review_object(spec, ("schemaVersion", "state", "decisionId", "problem", "requestedChange", "acceptanceCriteria",
+                             "evidenceRefs", "evidenceHashes", "contextHash", "needsConfirmation"))
+        if (type(spec["schemaVersion"]) is not int or spec["schemaVersion"] != 1
+                or not isinstance(spec["state"], str) or spec["state"] not in REVIEW_STATES
+                or entry["state"] != spec["state"] or entry["contextHash"] != spec["contextHash"]
+                or json.dumps(spec, sort_keys=True, ensure_ascii=False, allow_nan=False)
+                != json.dumps(task_map[int(key)]["approvedReview"], sort_keys=True, ensure_ascii=False, allow_nan=False)):
+            raise ReviewContractError("评审快照与任务规格、状态或上下文不一致")
+        review_uuid(spec["decisionId"])
+        review_hash(spec["contextHash"])
+        approved = spec["state"] == "approved"
+        review_text(spec["problem"], 2000, required=approved)
+        review_text(spec["requestedChange"], 3000, required=approved)
+        review_text_list(spec["acceptanceCriteria"])
+        review_text_list(spec["needsConfirmation"])
+        if approved and (not spec["acceptanceCriteria"] or spec["needsConfirmation"]):
+            raise ReviewContractError("approved 规格须有验收标准且无待确认问题")
+        refs, hashes = spec["evidenceRefs"], spec["evidenceHashes"]
+        if not isinstance(refs, list) or len(refs) > 20 or not isinstance(hashes, dict):
+            raise ReviewContractError("评审证据须为最多 20 项的路径和 hash")
+        for path in refs:
+            safe_image_path(path)
+        if len(set(refs)) != len(refs) or set(hashes) != set(refs) or not set(refs) <= set(annotation_paths(annotations[int(key)])):
+            raise ReviewContractError("评审证据须唯一并属于原批注图片引用，hash 须逐项对应")
+        for path in refs:
+            review_hash(hashes[path])
+            if image_hashes.get(path) != hashes[path]:
+                raise ReviewContractError("评审证据 hash 与实际图片不一致")
+        # B2 binds H1 to current raw source and actual image bytes. It cannot prove
+        # that H0, a claimed transformation, or a human approval event is authentic.
+        annotation = annotations[int(key)]
+        current_image_hashes = {path: image_hashes.get(path) for path in annotation_paths(annotation)}
+        try:
+            current_source_hash = _source_hash(annotation, current_image_hashes)
+        except ValueError as error:
+            raise ReviewContractError("当前批注来源摘要无效：" + str(error)) from error
+        if entry["appliesToSourceHash"] != current_source_hash:
+            raise ReviewContractError("appliesToSourceHash 与当前批注原话、分类或实际图片不一致")
 
 
 def thread_uuid(value):
@@ -135,10 +344,10 @@ def validate_payload(request):
             raise ValueError("批注原话与分类格式无效")
         identifiers[identifier] = annotation
         paths.update(annotation_paths(annotation))
-    if (not isinstance(tasks, dict) or type(tasks.get("schemaVersion")) is not int or tasks["schemaVersion"] != 1
+    if (not isinstance(tasks, dict) or type(tasks.get("schemaVersion")) is not int or tasks["schemaVersion"] not in (1, 2)
             or not isinstance(tasks.get("batch"), dict) or tasks["batch"].get("id") != batch["batchId"]
             or not isinstance(tasks.get("tasks"), list)):
-        raise ValueError("aiTasks 须与当前 v1 批次对应")
+        raise ValueError("aiTasks 须使用契约 1 或 2 并与当前 v1 批次对应")
     task_ids = set()
     for task in tasks["tasks"]:
         if not isinstance(task, dict) or not safe_integer(task.get("id")) or task["id"] not in identifiers or task["id"] in task_ids:
@@ -176,6 +385,7 @@ def validate_payload(request):
         if mime != expected or not signature_ok:
             raise ValueError("图片内容、MIME 与文件后缀不一致")
         decoded[path] = raw
+    validate_review_contract(batch, tasks, {path: hashlib.sha256(raw).hexdigest() for path, raw in decoded.items()})
     return batch, tasks, markdown, decoded
 
 
@@ -215,7 +425,9 @@ class Host:
             if not isinstance(request, dict):
                 raise ValueError("Native Messaging 请求必须为 JSON 对象")
             if request.get("op") == "info":
-                return {"ok": True, "defaultThread": self.default_thread}
+                return {"ok": True, "defaultThread": self.default_thread, "capabilities": {
+                    "taskContracts": [1, 2], "reviewTaskValidation": "structure_and_evidence",
+                    "sourceBindingValidation": False, "reviewExecution": False}}
             if request.get("op") in ("project-info", "project-bind", "project-sync", "project-read"):
                 if self.project_store is None:
                     module = runpy.run_path(str(Path(__file__).resolve().with_name("project_store.py")))
@@ -226,9 +438,13 @@ class Host:
                     return self.project_store.bind(request.get("projectId"), request.get("projectRoot"), request.get("projectName"))
                 if request["op"] == "project-sync":
                     return self.project_store.sync(request)
-                return self.project_store.read(request.get("projectId"), request.get("batchId"), compact=True)
+                return self.project_store.read(request.get("projectId"), request.get("batchId"), compact=True,
+                                               accept_task_contract=request.get("acceptTaskContract"))
             if request.get("op") != "send":
                 raise ValueError("op 仅支持 info 或 send")
+            if isinstance(request.get("aiTasks"), dict) and request["aiTasks"].get("schemaVersion") == 2:
+                return {"ok": False, "code": "TASK_CONTRACT_UNSUPPORTED_FOR_SEND",
+                        "error": "任务契约 2 仅支持项目同步与显式读取；来源绑定尚未验证，不能发送到开发对话"}
             target = request["threadId"] if "threadId" in request else self.default_thread
             if target in (None, ""):
                 return {"ok": False, "code": "THREAD_REQUIRED", "error": "请在发送时填写目标 threadId UUID，或安装时用 --thread 配置默认对话"}
