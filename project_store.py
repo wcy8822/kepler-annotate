@@ -333,8 +333,10 @@ class ProjectStore:
         if not entries:
             return
         claimed = {}
+        claimed_by_item = {}
         for key, entry in entries.items():
             identity = (key, current_revisions[key], digest(entry))
+            claimed_by_item[key] = identity
             for kind, value in (("approvalId", entry["approvalId"]),
                                 ("decisionId", entry["spec"]["decisionId"])):
                 slot = (kind, value)
@@ -342,6 +344,15 @@ class ProjectStore:
                     raise StoreError("一个评审决定 ID 不能绑定不同条目或内容", "REVIEW_DECISION_REPLAY")
                 claimed[slot] = identity
 
+        # The current HEAD (not an arbitrary old revision) defines the active
+        # decision for each item. Replaying an earlier, byte-identical decision
+        # after withdrawal/reconfirmation must not restore old work results.
+        head_path = safe_path(self.batch_dir(base, batch) / "HEAD")
+        active_review = {}
+        if head_path.exists() or head_path.is_symlink():
+            active = self.snapshot(base, project, batch, validate_basis=False)
+            for key, entry in active["batch"].get("approvedSnapshot", {}).get("entries", {}).items():
+                active_review[key] = (key, active["itemRevisions"][key], digest(entry))
         revisions = safe_path(self.batch_dir(base, batch) / "revisions")
         if not revisions.exists():
             return
@@ -363,6 +374,9 @@ class ProjectStore:
                     if slot in claimed and claimed[slot] != identity:
                         raise StoreError("评审决定 ID 已用于其他版本；须保留原历史并生成新决定",
                                          "REVIEW_DECISION_REPLAY")
+                if claimed_by_item.get(key) == identity and active_review.get(key) != identity:
+                    raise StoreError("旧评审决定已被撤回或替换，不能重新同步历史版本；须创建新的确认决定",
+                                     "REVIEW_DECISION_REWIND")
 
     def prevent_review_downgrade(self, base, project, batch, tasks):
         unreviewed = {str(task["id"]) for task in tasks["tasks"] if "approvedReview" not in task}

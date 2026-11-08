@@ -154,6 +154,23 @@ class ReviewStoreTest(unittest.TestCase):
                          withdrawn["revision"])
         self.assertFalse(self.read(accept_task_contract=2)["items"][0]["reviewGate"]["executable"])
 
+    def test_old_review_cannot_be_restored_after_withdrawal(self):
+        first = self.store.sync(review_payload())
+        newer = self.store.sync(review_payload(state="withdrawn"))
+        self.assertNotEqual(first["revision"], newer["revision"])
+        self.assert_error("REVIEW_DECISION_REWIND", self.store.sync, review_payload())
+        self.assertEqual(self.read(accept_task_contract=2)["revision"], newer["revision"])
+        self.assertEqual(self.store.sync(review_payload(state="withdrawn"))["revision"], newer["revision"])
+
+    def test_old_review_cannot_be_restored_after_item_deletion(self):
+        first = self.store.sync(review_payload())
+        deleted = self.store.sync(payload(ids=()))
+        self.assertNotEqual(first["revision"], deleted["revision"])
+        self.assert_error("REVIEW_DECISION_REWIND", self.store.sync, review_payload())
+        self.assertEqual(self.read()["revision"], deleted["revision"])
+        fresh = self.store.sync(review_payload(state="withdrawn"))
+        self.assertFalse(fresh["items"][0]["reviewGate"]["executable"])
+
     def test_v2_read_and_result_require_exact_explicit_acknowledgement(self):
         response = self.store.sync(review_payload())
         revision = response["items"][0]["revision"]

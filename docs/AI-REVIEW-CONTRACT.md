@@ -42,6 +42,12 @@ Native `project-sync` 与历史快照读取现调用 B1 Python 来源规范化�
 
 这只是**本地数据一致性**：没有验证网页本身真实性、用户点击、浏览器权限或截图传输授权；完整 URL 及元素线索可能含敏感信息，严格只留在本机，不进入公开仓库或默认外发。v1 数据和黄金 hash 不改，所有含评审条目仍 `SOURCE_VALIDATION_PENDING` / `executable:false`，v2 send 禁用。未来编辑器必须按同一规范计算并在用户明确采纳后建立可信事件链，才能讨论执行权限。
 
+### B3c-3a 历史决定重放防护（2026-11-08）
+
+针对当前批次 HEAD 仍可正常读取、但某个评审决定已被更晚决定替换、撤回或删除的情况，`project_store.py` 在原有项目锁内比较候选决定的 `(原编号, item revision, 完整 entry 摘要)`、当前 HEAD 和校验过的不可变历史。如果候选是**历史上曾生效但当前不再生效的原决定**，即使字节完全一致且原 UUID 没有变更复用，也返回 `REVIEW_DECISION_REWIND`，拒绝更新 HEAD；当前决定的幂等同步和使用新 UUID 的新决定继续允许。同步时原先的图片、来源、版本、决定 ID 校验均保留。
+
+此保护不能识别旧主机**直接篡改 HEAD 指针**回退到字节一致的旧决定；要关闭此边界需额外独立、单调且可恢复的可信事件序列。新检查不是用户采纳真实性证明，不提高 `sourceBindingValidation`，不解除 `SOURCE_VALIDATION_PENDING` 或完成性结果限制，不开放 v2 send。回归仅用虚构批注和合成图片，真实用户手势/Chrome/Native 全链路待验收。
+
 ## 版本与能力
 
 `info.capabilities` 声明 `taskContracts: [1, 2]`、`reviewTaskValidation: "structure_and_evidence"`、`sourceBindingValidation: false`、`reviewExecution: false`。这表示主机能保留并校验格式和图片关联，不表示能够验证批准来源，更不表示已内置模型。
@@ -135,6 +141,7 @@ aiTasks (schemaVersion: 2)
 | --- | --- |
 | `TASK_CONTRACT_ACK_REQUIRED` | 阅读新契约后显式确认格式，再逐项检查 reviewGate |
 | `INVALID_REVIEW_CONTRACT` | 保留原数据，修正结构或证据不一致；不能靠删字段降级 |
+| `REVIEW_DECISION_REWIND` | 已被撤回或替换的旧决定不可再次同步；生成新的用户决定，不复用历史批准 ID |
 | `TASK_CONTRACT_DOWNGRADE` | 保留评审决定；撤回需保留 tombstone 语义，不复用旧结果 |
 | `TASK_CONTRACT_UNSUPPORTED_FOR_SEND` | 暂用项目同步与显式审阅，不经旧直送通道执行 |
 | `REVIEW_SOURCE_VALIDATION_PENDING` | 保存待确认结果，等待来源校验与批准流程完成 |
