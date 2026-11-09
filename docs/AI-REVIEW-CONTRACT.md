@@ -48,6 +48,14 @@ Native `project-sync` 与历史快照读取现调用 B1 Python 来源规范化�
 
 此保护不能识别旧主机**直接篡改 HEAD 指针**回退到字节一致的旧决定；要关闭此边界需额外独立、单调且可恢复的可信事件序列。新检查不是用户采纳真实性证明，不提高 `sourceBindingValidation`，不解除 `SOURCE_VALIDATION_PENDING` 或完成性结果限制，不开放 v2 send。回归仅用虚构批注和合成图片，真实用户手势/Chrome/Native 全链路待验收。
 
+### B3c-3b 独立 HEAD 检查点（2026-11-09）
+
+当一个批次首次成功同步 v2 评审快照时，项目存储在原有项目锁中建立本地 `review-head-checkpoint.json`，记录项目、批次与本次 HEAD 快照 SHA-256。之后该批次即使删除全部评审条目、当前回到纯 v1，也持续更新检查点。同步、读取当前快照、结果回写及批次列表会核验检查点与 HEAD 一致；**旧主机只改 HEAD 指向字节完全一致的历史决定**，会返回 `REVIEW_HEAD_ROLLBACK`，不得靠重新同步旧决定自动恢复。历史快照的显式 cursor 读取仍采用既有内容校验，不重写 v1 黄金 hash 或 item revision。
+
+为保证旧结果不会在双文件写入中被意外恢复，先原子写检查点再写 HEAD；两个文件无法作为单一事务提交，若中途崩溃或磁盘损坏导致不一致，**故意失败关闭**，需要人工根据不可变历史核查并恢复检查点所指 HEAD，不进行自动修复。检查点只防护创建之后旧主机单独改写 HEAD；首次升级前的回拨、用户或恶意进程同时篡改/删除两文件、跨设备复制及真正可信的用户操作顺序并未解决。检查点是本地一致性防护，**不是加密签名或用户采纳证明**。
+
+所有评审仍保持 `SOURCE_VALIDATION_PENDING`、`executable:false`，禁止完成性结果和 v2 send；实际 Chrome/Native Messaging 及人工恢复需单独验收。
+
 ## 版本与能力
 
 `info.capabilities` 声明 `taskContracts: [1, 2]`、`reviewTaskValidation: "structure_and_evidence"`、`sourceBindingValidation: false`、`reviewExecution: false`。这表示主机能保留并校验格式和图片关联，不表示能够验证批准来源，更不表示已内置模型。

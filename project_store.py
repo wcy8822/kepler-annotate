@@ -205,9 +205,37 @@ class ProjectStore:
     def batch_dir(base, batch):
         return safe_path(base / "batches" / digest(identifier(batch, "batchId")))
 
+    def verify_review_head_checkpoint(self, base, project, batch):
+        """Detect old hosts changing HEAD without updating the independent review pointer.
+
+        The checkpoint starts on the first v2 sync. Missing pre-existing
+        checkpoints cannot retroactively establish a trusted event history.
+        """
+        location = self.batch_dir(base, batch)
+        anchor = safe_path(location / "review-head-checkpoint.json")
+        if not anchor.exists() and not anchor.is_symlink():
+            return False
+        checkpoint = read_json(anchor)
+        head = safe_path(location / "HEAD")
+        if not head.exists() and not head.is_symlink():
+            raise StoreError("评审 HEAD 已丢失，与独立检查点不一致", "REVIEW_HEAD_ROLLBACK")
+        current = read_json(head)
+        expected_keys = {"schemaVersion", "projectId", "batchId", "revision"}
+        if (not isinstance(checkpoint, dict) or set(checkpoint) != expected_keys
+                or type(checkpoint.get("schemaVersion")) is not int or checkpoint["schemaVersion"] != 1
+                or checkpoint.get("projectId") != project or checkpoint.get("batchId") != batch
+                or not isinstance(checkpoint.get("revision"), str)
+                or not re.fullmatch(r"[a-f0-9]{64}", checkpoint["revision"])
+                or not isinstance(current, dict) or current.get("projectId") != project
+                or current.get("batchId") != batch or current.get("revision") != checkpoint["revision"]):
+            raise StoreError("评审 HEAD 与独立检查点不一致，禁止恢复历史决定；需人工核查原快照",
+                             "REVIEW_HEAD_ROLLBACK")
+        return True
+
     def snapshot(self, base, project, batch, revision=None, *, validate_basis=True):
         location = self.batch_dir(base, batch)
         if revision is None:
+            self.verify_review_head_checkpoint(base, project, batch)
             head = location / "HEAD"
             if not head.exists() and not head.is_symlink():
                 raise StoreError("批次尚无已同步快照", "BATCH_NOT_FOUND")
@@ -410,6 +438,7 @@ class ProjectStore:
             response = self.header(binding, project, batch_id)
             if binding is None:
                 return dict(response, revision=None, items=[])
+            checkpointed = self.verify_review_head_checkpoint(base, project, batch_id)
             self.prevent_review_downgrade(base, project, batch_id, tasks)
             location = directory(self.batch_dir(base, batch_id))
             revisions = directory(location / "revisions")
@@ -437,6 +466,11 @@ class ProjectStore:
                 finally:
                     os.close(fd)
             snapshot = self.snapshot(base, project, batch_id, revision)
+            # Write the independent checkpoint first. A crash before the HEAD
+            # update fails closed on the next read rather than reviving old work.
+            if tasks.get("schemaVersion") == 2 or checkpointed:
+                save_json(location / "review-head-checkpoint.json", {"schemaVersion": 1,
+                    "projectId": project, "batchId": batch_id, "revision": revision})
             save_json(location / "HEAD", {"projectId": project, "batchId": batch_id, "revision": revision})
             return dict(response, revision=revision, cursor=revision, folder=str(folder), items=self.view(base, project, batch_id, snapshot, compact=True))
 

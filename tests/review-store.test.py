@@ -85,6 +85,12 @@ class ReviewStoreTest(unittest.TestCase):
         folder.rename(folder.with_name(revision))
         self.module["save_json"](folder.parent.parent / "HEAD", {
             "projectId": "project-1", "batchId": "batch-1", "revision": revision})
+        # Semantic corruption tests intentionally rewrite both pointers. This
+        # exercises snapshot validation rather than the separate rollback guard.
+        anchor = folder.parent.parent / "review-head-checkpoint.json"
+        if anchor.exists():
+            self.module["save_json"](anchor, {"schemaVersion": 1, "projectId": "project-1",
+                                              "batchId": "batch-1", "revision": revision})
 
     def test_v1_golden_hashes_and_read_shape_remain_unchanged(self):
         response = self.store.sync(payload())
@@ -245,8 +251,8 @@ class ReviewStoreTest(unittest.TestCase):
         head = Path(original["folder"]).parent.parent / "HEAD"
         self.module["save_json"](head, {"projectId": "project-1", "batchId": "batch-1",
                                       "revision": original["revision"]})
-        self.assert_error("TASK_CONTRACT_DOWNGRADE", self.read)
-        self.assert_error("TASK_CONTRACT_DOWNGRADE", self.result, original["items"][0]["revision"])
+        self.assert_error("REVIEW_HEAD_ROLLBACK", self.read)
+        self.assert_error("REVIEW_HEAD_ROLLBACK", self.result, original["items"][0]["revision"])
 
     def test_since_v2_history_requires_ack_even_when_current_is_v1(self):
         reviewed = self.store.sync(review_payload())
@@ -416,6 +422,59 @@ class ReviewStoreTest(unittest.TestCase):
         finally:
             hidden.rename(original)
         self.assertEqual(self.read(accept_task_contract=2)["revision"], accepted["revision"])
+
+
+    def test_review_head_checkpoint_rejects_byte_identical_old_decision(self):
+        old = self.store.sync(review_payload())
+        latest = self.store.sync(review_payload(state="withdrawn"))
+        location = Path(latest["folder"]).parent.parent
+        anchor = location / "review-head-checkpoint.json"
+        self.assertEqual(self.module["read_json"](anchor)["revision"], latest["revision"])
+        head = location / "HEAD"
+        self.module["save_json"](head, {"projectId": "project-1", "batchId": "batch-1",
+                                        "revision": old["revision"]})
+        self.assert_error("REVIEW_HEAD_ROLLBACK", self.read, accept_task_contract=2)
+        self.assert_error("REVIEW_HEAD_ROLLBACK", self.result, old["items"][0]["revision"],
+                          accept_task_contract=2)
+        self.assert_error("REVIEW_HEAD_ROLLBACK", self.store.batches, "project-1")
+        self.assert_error("REVIEW_HEAD_ROLLBACK", self.store.sync, review_payload(state="withdrawn"))
+        self.assertEqual(self.module["read_json"](head)["revision"], old["revision"])
+        # Recover only by restoring the known-good checkpointed HEAD.
+        self.module["save_json"](head, {"projectId": "project-1", "batchId": "batch-1",
+                                        "revision": latest["revision"]})
+        self.assertEqual(self.read(accept_task_contract=2)["revision"], latest["revision"])
+
+    def test_checkpoint_survives_deleted_review_and_preserves_v1_behavior(self):
+        initial = self.store.sync(payload())
+        location = Path(initial["folder"]).parent.parent
+        anchor = location / "review-head-checkpoint.json"
+        self.assertFalse(anchor.exists())
+        self.store.sync(review_payload())
+        deleted = self.store.sync(payload(ids=()))
+        self.assertEqual(self.module["read_json"](anchor)["revision"], deleted["revision"])
+        self.assertEqual(self.read()["items"], [])
+        self.assertEqual(self.store.sync(payload(ids=()))["revision"], deleted["revision"])
+        # Old hosts may know v1 and write HEAD, but cannot silently go backward.
+        self.module["save_json"](location / "HEAD", {"projectId": "project-1",
+                                                      "batchId": "batch-1", "revision": initial["revision"]})
+        self.assert_error("REVIEW_HEAD_ROLLBACK", self.read)
+        self.module["save_json"](location / "HEAD", {"projectId": "project-1",
+                                                      "batchId": "batch-1", "revision": deleted["revision"]})
+        self.assertEqual(self.read()["items"], [])
+
+    def test_corrupt_review_head_checkpoint_is_not_silently_recreated(self):
+        saved = self.store.sync(review_payload())
+        location = Path(saved["folder"]).parent.parent
+        anchor = location / "review-head-checkpoint.json"
+        valid = self.module["read_json"](anchor)
+        for changed in (dict(valid, projectId="wrong"), dict(valid, revision="0" * 64),
+                        dict(valid, schemaVersion=True)):
+            with self.subTest(changed=changed):
+                self.module["save_json"](anchor, changed)
+                self.assert_error("REVIEW_HEAD_ROLLBACK", self.read, accept_task_contract=2)
+                self.assert_error("REVIEW_HEAD_ROLLBACK", self.store.sync, review_payload())
+        self.module["save_json"](anchor, valid)
+        self.assertEqual(self.read(accept_task_contract=2)["revision"], saved["revision"])
 
 
 if __name__ == "__main__":
