@@ -26,6 +26,22 @@ async function save(page,text){const ui=page.locator('#kp-annotate-host');await 
  await check('项目本地入口保留原项目批次管理',async()=>{await ui.locator('[data-action=project]').waitFor({timeout:2000});await ui.locator('[data-action=list]').first().click();assert.equal(await ui.locator('[name=project]').count(),1);assert.equal(await ui.locator('[name=batch]').count(),1);});
  const dialog=await closedUI(page);
  await check('绑定界面隔离，合成事件不能设置项目路径',async()=>{await ui.locator('[data-action=project]').click();await dialog.wait('绑定');assert.equal(await page.evaluate(()=>!!document.querySelector('#kp-annotate-host').shadowRoot.querySelector('.ka-project')),false);await dialog.locator('input').evaluate(el=>{el.value='/tmp/evil';el.dispatchEvent(new Event('input',{bubbles:true,composed:true}));});await dialog.locator('[data-project=bind]').evaluate(el=>el.click());assert.equal(await worker.evaluate(()=>projectBinding),null);await dialog.locator('[data-project=bind]').click();assert.equal(await worker.evaluate(()=>projectBinding),null);});
+ await check('本地类别候选不覆盖原话，只有真实用户点击才采纳',async()=>{
+  await ui.locator('[data-edit="1"]').click();
+  await ui.locator('[name=text]').fill('这里有错别字');
+  await ui.locator('.ka-category-suggestion').waitFor({state:'visible'});
+  assert.equal(await ui.locator('[name=category]').inputValue(),'视觉');
+  await ui.locator('[data-action=adopt-category]').evaluate(button=>button.click());
+  assert.equal(await ui.locator('[name=category]').inputValue(),'视觉');
+  await ui.locator('[data-action=dismiss-category]').click();
+  assert.equal(await ui.locator('.ka-category-suggestion').isVisible(),false);
+  await ui.locator('[name=text]').fill('文字错误需要调整');
+  await ui.locator('.ka-category-suggestion').waitFor({state:'visible'});
+  await ui.locator('[data-action=adopt-category]').click();
+  assert.equal(await ui.locator('[name=category]').inputValue(),'文案');
+  assert.equal(await ui.locator('[name=text]').inputValue(),'文字错误需要调整');
+  await ui.locator('[data-action=cancel]').click();
+ });
  await check('真实绑定同步项目，保存新批注自动同步原话和图片',async()=>{await dialog.locator('input').fill('/tmp/kepler-ui-fixture');await dialog.locator('[data-project=bind]').click();await dialog.wait('已同步');await dialog.locator('[data-project=close]').click();await save(page,'请将标题改为新文案');await assertEventually(()=>worker.evaluate(()=>projectPayloads.some(p=>p.batch.annotations.some(a=>a.text==='请将标题改为新文案'))));const payload=await worker.evaluate(()=>projectPayloads.findLast(p=>p.batch.annotations.length));assert.equal(payload.aiTasks.tasks[0].rawComment,'请将标题改为新文案');assert.match(payload.assets[payload.batch.annotations[0].shot],/^data:image\/png;base64,/);});
  await check('AI回写显示待验收、说明及提交，不自动替用户完成',async()=>{await worker.evaluate(()=>{projectResults=[{id:1,revision:'item-请将标题改为新文案',status:'待验收',summary:'标题已改，等待验收',branch:'codex/annotation-fixture',commit:'a'.repeat(40),checks:[{command:'node check.cjs',exitCode:0}]}];});await ui.locator('[data-action=project-read]').click();await ui.locator('.ka-ai-result').filter({hasText:'待验收'}).waitFor();assert((await ui.locator('.ka-ai-result').textContent()).includes('标题已改'));assert((await ui.locator('article a').first().textContent()).includes('未处理'));await page.screenshot({path:path.join(output,'ai-result-visible.png')});});
  await check('修改原话后旧AI结果立即失效；查询故障保留浏览器批注',async()=>{await ui.locator('[data-edit="1"]').click();await ui.locator('[name=text]').fill('请改成另一标题');await ui.locator('[data-action=save]').click();await ui.locator('.ka-editor').waitFor({state:'hidden'});assert.equal(await ui.locator('.ka-ai-result').count(),0);await worker.evaluate(()=>{projectFail=true;});await ui.locator('[data-action=project-read]').click();await ui.locator('.ka-project-summary').filter({hasText:'保留'}).waitFor();assert.equal(await worker.evaluate(async()=>JSON.parse(await snapshot()).annotations.length),1);await worker.evaluate(()=>{projectFail=false;});});

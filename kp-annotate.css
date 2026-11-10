@@ -79,6 +79,11 @@
 #kp-annotate-root summary{cursor:pointer;font-size:13px;color:var(--ka-muted);text-underline-offset:3px}
 #kp-annotate-root summary:hover{color:var(--ka-text)}
 #kp-annotate-root .ka-target{color:var(--ka-muted);overflow-wrap:anywhere;font-size:12px;margin:8px 0 16px}
+#kp-annotate-root .ka-category-suggestion{margin-top:12px;padding:12px 14px;border:1px solid var(--ka-line);border-radius:10px;background:var(--ka-surface);font-size:13px}
+#kp-annotate-root .ka-category-suggestion[hidden]{display:none}
+#kp-annotate-root .ka-category-suggestion strong{font-weight:650}
+#kp-annotate-root .ka-category-reason{color:var(--ka-muted);margin:6px 0 10px;line-height:1.5}
+#kp-annotate-root .ka-category-suggestion div{display:flex;gap:8px;flex-wrap:wrap}
 #kp-annotate-root .ka-refs{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 #kp-annotate-root .ka-refs canvas{max-width:120px;max-height:80px;object-fit:contain;border:1px solid var(--ka-line);border-radius:6px}
 #kp-annotate-root .ka-refs span{font-size:12px;overflow-wrap:anywhere}

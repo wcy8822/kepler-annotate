@@ -25,6 +25,7 @@
       <dialog class="ka-editor" data-html2canvas-ignore="true" aria-label="编辑批注"><form method="dialog">
         <h2>写批注</h2><p class="ka-target"></p><label>类别<select name="category"><option>视觉</option><option>文案</option><option>交互</option><option>产品逻辑</option><option>反馈/建议</option></select></label><label>处理状态<select name="status"><option>未处理</option><option>处理中</option><option>待验收</option><option>已完成</option></select></label>
         <label>一句话说明<textarea name="text" rows="4" required maxlength="4000" placeholder="希望改成什么样？"></textarea></label>
+        <section class="ka-category-suggestion" hidden aria-label="本地类别建议"><strong></strong><p class="ka-category-reason"></p><div><button type="button" data-action="adopt-category">采用此类别</button><button type="button" data-action="dismiss-category">仅保留当前分类</button></div></section>
         <details><summary>补充观察、预期与复现（选填）</summary><label>实际看到什么<textarea name="observed" rows="2" maxlength="4000"></textarea></label><label>希望怎样<textarea name="expected" rows="2" maxlength="4000"></textarea></label><label>如何复现<textarea name="reproduction" rows="2" maxlength="4000"></textarea></label></details><label>参考图 · Ctrl+V / ⌘V 粘贴，或选择图片<input type="file" name="reference" accept="image/*" multiple></label><div class="ka-refs"></div>
         <p class="ka-editor-status" role="status"></p><footer><button type="button" data-action="cancel">取消</button><button type="button" data-action="save">保存批注</button></footer>
       </form></dialog><dialog class="ka-manager" aria-label="批次管理"><form><h2></h2><p class="ka-management-hint"></p><label>名称<input name="management-name" maxlength="80" required></label><p role="status"></p><footer><button type="button" data-action="manage-cancel">取消</button><button type="submit">确定</button></footer></form></dialog><div class="ka-status" role="status" data-html2canvas-ignore="true"></div>`;
@@ -37,6 +38,7 @@
     const $ = s => s.startsWith('.ka-codex') ? (s === '.ka-codex' ? codexDialog : codexShadow.querySelector(s)) : root.querySelector(s), layer = $('.ka-layer'), markers = $('.ka-markers'), editor = $('.ka-editor'), list = $('.ka-list');
     const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     let noticeTimer, freezeTimer, frozen = null, categoryFilter = '', statusFilter = '', selected = new Set(), managementAction = null, managementSnapshot = null;
+    let categorySuggestion = null, dismissedSuggestionKey = null;
     let projectUI;
     let codexSnapshot = null, codexTarget = '', codexTargetEdited = false, codexSubmitter = null, codexRequest = null;
     const categories = ['视觉','文案','交互','产品逻辑','反馈/建议'], statuses = ['未处理','处理中','待验收','已完成'];
@@ -175,12 +177,29 @@
       if(batch.status==='archived')throw Error('本批已归档，请在清单中点击「继续此批」后新增');
       return { batchId:batch.batchId, id:batch.nextId, mode, status:'未处理', category:'视觉', text:'', url:location.href, pageKey:key(), title:document.title || location.hostname, elements, rect, shapes, viewport:{width:innerWidth,height:innerHeight,scrollX,scrollY}, build, ...(frozen ? {snapshot:frozen} : {}), shot:`shots/${String(batch.nextId).padStart(3,'0')}.png`, refs:[], createdAt:new Date().toISOString() };
     }
+
+    function categoryInputs() {
+      return Object.fromEntries(['text','observed','expected','reproduction'].map(field => [field, $('[name=' + field + ']').value]));
+    }
+    function renderCategorySuggestion() {
+      const panel = $('.ka-category-suggestion');
+      categorySuggestion = null;
+      panel.hidden = true;
+      if (!draft || !editor.open) return;
+      const input = categoryInputs(), key = JSON.stringify(input);
+      const candidate = store.suggestCategory(input);
+      if (!candidate || candidate.category === $('[name=category]').value || key === dismissedSuggestionKey) return;
+      categorySuggestion = {...candidate, key};
+      panel.querySelector('strong').textContent = candidate.category + ' · 本地规则候选';
+      panel.querySelector('.ka-category-reason').textContent = candidate.reason + '；仅作分类参考，原话不会被修改。';
+      panel.hidden = false;
+    }
     function openDraft(item, existing=false) {
       if (busy) return;
       draft = {...item, batchId:batch.batchId, existing, pendingRefs:[], removedRefs:[]};
       $('.ka-target').textContent = existing ? `编辑 #${item.id} · ${item.elements.map(e=>e.text).join(' → ')}` : item.mode==='reference' ? '改成像这个：'+item.elements.map(e=>e.text).join(' → ') : `#${item.id} · ${item.elements.map(e=>e.text).join(' / ') || '手绘区域'}`;
       for(const field of ['observed','expected','reproduction'])$('[name='+field+']').value=item[field]||''; $('[name=status]').value=item.status||'未处理';
-      $('[name=text]').value=item.text; $('[name=category]').value=item.category; $('.ka-editor-status').textContent=''; $('[name=reference]').value=''; renderRefs(); renderMarks(); editor.showModal(); $('[name=text]').focus();
+      $('[name=text]').value=item.text; $('[name=category]').value=item.category; $('.ka-editor-status').textContent=''; $('[name=reference]').value=''; renderRefs(); renderMarks(); editor.showModal(); dismissedSuggestionKey = null; renderCategorySuggestion(); $('[name=text]').focus();
     }
     function renderRefs() {
       $('.ka-refs').replaceChildren();
@@ -335,6 +354,13 @@
       if(button.dataset.id||button.dataset.edit){const a=batch.annotations.find(x=>x.id===Number(button.dataset.id||button.dataset.edit));if(a)openDraft(a,true);return;}
       if(button.dataset.delete){if(busy)return;const a=batch.annotations.find(x=>x.id===Number(button.dataset.delete));if(!a||!confirm(`删除批注 #${a.id}？`))return;try{await locked(async()=>{await commit({...batch,annotations:batch.annotations.filter(x=>x!==a)});await store.clearAssets([a.shot,...a.refs]);});renderMarks();renderList();}catch(e){notice('删除失败：'+e.message);}return;}
       const type=button.dataset.action;
+      if(type==='adopt-category' || type==='dismiss-category') {
+        if (!event.isTrusted || busy || !draft || !editor.open || !categorySuggestion ||
+            categorySuggestion.key !== JSON.stringify(categoryInputs())) { renderCategorySuggestion(); return; }
+        if (type === 'adopt-category') $('[name=category]').value = categorySuggestion.category;
+        else dismissedSuggestionKey = categorySuggestion.key;
+        renderCategorySuggestion(); return;
+      }
       if(type==='list')toggleList();
       if(type==='freeze-delay')delayedFreeze();
       if(type==='unfreeze')setMode('browse');
@@ -405,6 +431,12 @@
       }
     });
     root.addEventListener('click',event=>{action(event).catch(e=>notice(e.message));});
+    editor.addEventListener('input', event => {
+      if (['text','observed','expected','reproduction'].includes(event.target?.name)) renderCategorySuggestion();
+    });
+    editor.addEventListener('change', event => {
+      if (event.target?.name === 'category') renderCategorySuggestion();
+    });
     $('[name=reference]').addEventListener('change',event=>addRefs(event.target.files));
     editor.addEventListener('paste',event=>{const files=[...(event.clipboardData?.items || [])].filter(x=>x.kind==='file').map(x=>x.getAsFile()).filter(Boolean);if(files.length){event.preventDefault();addRefs(files);}});
     editor.addEventListener('cancel',event=>{event.preventDefault();if(!busy){draft=null;editor.close();refreshBatch();setMode('browse');renderList();}});
