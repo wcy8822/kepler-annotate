@@ -27,7 +27,7 @@ test('本地规则覆盖五类明确反馈，仅给候选不修改原数据', ()
 });
 
 test('多类别线索、不明确描述与空输入不生成自信结论', () => {
-  for (const text of ['帮我看看','点击后布局重叠','文字颜色有问题','']) {
+  for (const text of ['帮我看看','点击后布局重叠','文案颜色有问题','']) {
     assert.equal(store.suggestCategory({text}),null);
   }
   assert.equal(store.suggestCategory(null),null);
