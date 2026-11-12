@@ -349,6 +349,9 @@
       } catch (error) { if (codexRequest === request && codexSnapshot === snapshot && dialog.open) dialog.querySelector('.ka-codex-status').textContent = error.message; }
     }
     async function action(event) {
+      // Page scripts can reach the open shadow root; their synthetic clicks must not mutate a batch.
+      // This is a UI guard, not proof of human approval for a v2 review decision.
+      if (!event.isTrusted) return;
       const button=event.target.closest('button');if(!button)return;
       if(button.dataset.mode){setMode(button.dataset.mode);return;}
       if(button.dataset.id||button.dataset.edit){const a=batch.annotations.find(x=>x.id===Number(button.dataset.id||button.dataset.edit));if(a)openDraft(a,true);return;}
@@ -440,7 +443,8 @@
     $('[name=reference]').addEventListener('change',event=>addRefs(event.target.files));
     editor.addEventListener('paste',event=>{const files=[...(event.clipboardData?.items || [])].filter(x=>x.kind==='file').map(x=>x.getAsFile()).filter(Boolean);if(files.length){event.preventDefault();addRefs(files);}});
     editor.addEventListener('cancel',event=>{event.preventDefault();if(!busy){draft=null;editor.close();refreshBatch();setMode('browse');renderList();}});
-    editor.querySelector('form').addEventListener('submit',event=>{event.preventDefault();saveDraft();});
+    // Implicit or scripted form submission must never bypass the explicit Save button.
+    editor.querySelector('form').addEventListener('submit',event=>event.preventDefault());
     document.addEventListener('keydown',event=>{
       if(event.altKey&&event.shiftKey&&event.code==='KeyS'&&enabled&&!editor.open){event.preventDefault();event.stopImmediatePropagation();freezePage().catch(error=>notice('定格失败：'+error.message));}
       else if(event.altKey&&event.code==='KeyA'){event.preventDefault();toggle();}

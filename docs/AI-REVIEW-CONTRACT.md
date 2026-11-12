@@ -56,6 +56,12 @@ Native `project-sync` 与历史快照读取现调用 B1 Python 来源规范化�
 
 所有评审仍保持 `SOURCE_VALIDATION_PENDING`、`executable:false`，禁止完成性结果和 v2 send；实际 Chrome/Native Messaging 及人工恢复需单独验收。
 
+### B3d-0 编辑器用户动作入口保护（2026-11-12）
+
+原编辑器根部的按钮分派拒绝 `event.isTrusted === false` 的合成 click，避免页面脚本通过开放的 Shadow DOM 直接调用保存、删除及类别采纳动作；编辑器 `submit` 仅阻止默认提交，不再调用 `saveDraft`，因此 `form.requestSubmit()` 或合成 submit 不能绕过显式保存按钮。合成 Chromium 用例覆盖这些路径。
+
+**这不是用户批准身份或来源的密码学证明**：浏览器自动化、扩展内部代码及用户设备上具有相应权限的程序仍可能发起被浏览器标记为 trusted 的操作，数据存储接口也不是隔离的签名服务。该改动只收紧 UI 动作入口，既不创建可信批准事件，也不开放 `SOURCE_VALIDATION_PENDING` / `executable:false` 或 v2 send。完整 B3d 仍须在受控的扩展上下文中形成可追溯的批准/拒绝/撤回事件，绑定 H0/H1、图片、上下文和精确版本。
+
 ## 版本与能力
 
 `info.capabilities` 声明 `taskContracts: [1, 2]`、`reviewTaskValidation: "structure_and_evidence"`、`sourceBindingValidation: false`、`reviewExecution: false`。这表示主机能保留并校验格式和图片关联，不表示能够验证批准来源，更不表示已内置模型。

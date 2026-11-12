@@ -28,6 +28,17 @@ async function save(page,text){const ui=page.locator('#kp-annotate-host');await 
  await check('绑定界面隔离，合成事件不能设置项目路径',async()=>{await ui.locator('[data-action=project]').click();await dialog.wait('绑定');assert.equal(await page.evaluate(()=>!!document.querySelector('#kp-annotate-host').shadowRoot.querySelector('.ka-project')),false);await dialog.locator('input').evaluate(el=>{el.value='/tmp/evil';el.dispatchEvent(new Event('input',{bubbles:true,composed:true}));});await dialog.locator('[data-project=bind]').evaluate(el=>el.click());assert.equal(await worker.evaluate(()=>projectBinding),null);await dialog.locator('[data-project=bind]').click();assert.equal(await worker.evaluate(()=>projectBinding),null);});
  await check('真实绑定同步项目，保存新批注自动同步原话和图片',async()=>{await dialog.locator('input').fill('/tmp/kepler-ui-fixture');await dialog.locator('[data-project=bind]').click();await dialog.wait('已同步');await dialog.locator('[data-project=close]').click();await save(page,'请将标题改为新文案');await assertEventually(()=>worker.evaluate(()=>projectPayloads.some(p=>p.batch.annotations.some(a=>a.text==='请将标题改为新文案'))));const payload=await worker.evaluate(()=>projectPayloads.findLast(p=>p.batch.annotations.length));assert.equal(payload.aiTasks.tasks[0].rawComment,'请将标题改为新文案');assert.match(payload.assets[payload.batch.annotations[0].shot],/^data:image\/png;base64,/);});
 
+ await check('非可信 DOM 点击和表单提交不能保存或修改原批注',async()=>{
+  await ui.locator('[data-edit="1"]').click();
+  await ui.locator('[name=text]').fill('合成页面脚本企图改写原话');
+  await ui.locator('[data-action=save]').evaluate(button=>button.click());
+  assert.equal(await ui.locator('.ka-editor').isVisible(),true,'脚本点击不能关闭编辑器');
+  await ui.locator('.ka-editor form').evaluate(form=>form.requestSubmit());
+  assert.equal(await ui.locator('.ka-editor').isVisible(),true,'隐式表单提交不能保存');
+  const persisted=await worker.evaluate(async()=>JSON.parse(await snapshot()));
+  assert.equal(persisted.annotations.find(a=>a.id===1)?.text,'请将标题改为新文案');
+  await ui.locator('[data-action=cancel]').click();
+ });
  await check('本地类别候选不覆盖原话，只有真实用户点击才采纳',async()=>{
   assert.equal(await ui.locator('[data-edit="1"]').count(),1,'真实保存后才进行编辑器候选验收');
   await ui.locator('[data-edit="1"]').click();
