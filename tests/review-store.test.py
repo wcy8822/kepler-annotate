@@ -368,6 +368,54 @@ class ReviewStoreTest(unittest.TestCase):
         record["sourceTransform"] = {"schemaVersion": 1, "adoptedCategory": None, "addedEvidence": []}
         return baseline, data
 
+    def test_versioned_decision_claim_checks_active_head_predecessor(self):
+        native = self.module["_native"]
+
+        def seal(data, action, prior=None):
+            item = data["batch"]["approvedSnapshot"]["entries"]["7"]
+            context = native["context_projection"](data["batch"]["annotations"][0])
+            fingerprint = hashlib.sha256(native["context_json"](context).encode()).hexdigest()
+            item["contextSnapshot"] = context
+            item["contextHash"] = fingerprint
+            item["spec"]["contextHash"] = fingerprint
+            data["aiTasks"]["tasks"][0]["approvedReview"] = copy.deepcopy(item["spec"])
+            item["decision"] = {
+                "kind": "review-decision-v1", "schemaVersion": 1,
+                "action": action, "approvalId": item["approvalId"],
+                "decisionId": item["spec"]["decisionId"],
+                "sourceItemRevision": item["sourceItemRevision"],
+                "basisSourceHash": item["basisSourceHash"],
+                "appliesToSourceHash": item["appliesToSourceHash"],
+                "contextHash": fingerprint, "previousDecisionId": prior,
+                "specHash": self.module["digest"](item["spec"])}
+        _, first = self.linked_review()
+        seal(first, "adopt")
+        committed = self.store.sync(first)
+        self.assertEqual(committed["revision"], self.store.sync(first)["revision"])
+        self.assertFalse(self.read(accept_task_contract=2)["items"][0]["reviewGate"]["executable"])
+        withdrawn = review_payload(state="withdrawn")
+        old = first["batch"]["approvedSnapshot"]["entries"]["7"]
+        next_entry = withdrawn["batch"]["approvedSnapshot"]["entries"]["7"]
+        for field in ("sourceItemRevision", "basisSourceHash", "sourceTransform"):
+            next_entry[field] = copy.deepcopy(old[field])
+        seal(withdrawn, "withdraw", old["spec"]["decisionId"])
+        wrong = copy.deepcopy(withdrawn)
+        wrong["batch"]["approvedSnapshot"]["entries"]["7"]["decision"]["previousDecisionId"] = (
+            "87654321-4321-4321-8321-123456789abc")
+        self.assert_error("REVIEW_DECISION_SEQUENCE", self.store.sync, wrong)
+        self.assertEqual(committed["revision"], self.read(accept_task_contract=2)["revision"])
+        accepted = self.store.sync(withdrawn)
+        self.assertEqual(accepted["revision"], self.store.sync(withdrawn)["revision"])
+        self.assertFalse(self.read(accept_task_contract=2)["items"][0]["reviewGate"]["executable"])
+        downgraded = review_payload(state="withdrawn")
+        new_id = "87654321-4321-4321-8321-123456789abd"
+        entry_ = downgraded["batch"]["approvedSnapshot"]["entries"]["7"]
+        entry_["approvalId"] = new_id
+        entry_["spec"]["decisionId"] = new_id
+        downgraded["aiTasks"]["tasks"][0]["approvedReview"]["decisionId"] = new_id
+        self.assert_error("REVIEW_DECISION_SEQUENCE", self.store.sync, downgraded)
+        self.assert_error("REVIEW_DECISION_SEQUENCE", self.store.sync, first)
+
     def test_historical_h0_revision_is_bound_but_cannot_grant_execution(self):
         baseline, data = self.linked_review()
         accepted = self.store.sync(data)

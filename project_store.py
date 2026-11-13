@@ -381,6 +381,25 @@ class ProjectStore:
             active = self.snapshot(base, project, batch, validate_basis=False)
             for key, entry in active["batch"].get("approvedSnapshot", {}).get("entries", {}).items():
                 active_review[key] = (key, active["itemRevisions"][key], digest(entry))
+        # A versioned audit must cite the immediately active HEAD decision.
+        # This is lineage validation, not user identity authentication.
+        active_entries = (active["batch"].get("approvedSnapshot", {}).get("entries", {})
+                          if active_review else {})
+        for key, entry in entries.items():
+            earlier = active_entries.get(key)
+            if earlier is not None and active_review[key] == claimed_by_item[key]:
+                continue
+            audit = entry.get("decision", {})
+            typed = audit.get("kind") == "review-decision-v1"
+            if (earlier is not None and
+                    earlier.get("decision", {}).get("kind") == "review-decision-v1" and not typed):
+                raise StoreError("版本化决定不能静默降级", "REVIEW_DECISION_SEQUENCE")
+            if typed:
+                previous = audit["previousDecisionId"]
+                if earlier is None and previous is not None:
+                    raise StoreError("首个决定不能伪造前序", "REVIEW_DECISION_SEQUENCE")
+                if earlier is not None and previous != earlier["spec"]["decisionId"]:
+                    raise StoreError("必须引用当前 HEAD 的前序决定", "REVIEW_DECISION_SEQUENCE")
         revisions = safe_path(self.batch_dir(base, batch) / "revisions")
         if not revisions.exists():
             return

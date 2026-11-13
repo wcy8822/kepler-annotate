@@ -84,6 +84,52 @@ class ReviewContractTest(unittest.TestCase):
                 with self.assertRaises(native.ReviewContractError):
                     native.validate_payload(changed)
 
+    def test_versioned_decision_claim_binds_source_and_spec_without_approval(self):
+        data = reviewed()
+        record = entry(data)
+        context = native.context_projection(data["batch"]["annotations"][0])
+        digest = hashlib.sha256(native.context_json(context).encode()).hexdigest()
+        record["sourceItemRevision"] = "d" * 64
+        record["sourceTransform"] = {"schemaVersion": 1, "adoptedCategory": None, "addedEvidence": []}
+        record["contextSnapshot"] = context
+        record["contextHash"] = digest
+        set_spec(data, "contextHash", digest)
+        record["decision"] = {
+            "kind": "review-decision-v1", "schemaVersion": 1, "action": "adopt",
+            "approvalId": record["approvalId"], "decisionId": record["spec"]["decisionId"],
+            "sourceItemRevision": record["sourceItemRevision"],
+            "basisSourceHash": record["basisSourceHash"],
+            "appliesToSourceHash": record["appliesToSourceHash"],
+            "contextHash": digest, "previousDecisionId": None,
+            "specHash": hashlib.sha256(native.context_json(record["spec"]).encode()).hexdigest()}
+        native.validate_payload(data)
+        for variant in ("specHash", "sourceItemRevision", "appliesToSourceHash",
+                        "wrong_action", "bad_previous", "unknown_action", "extra_field",
+                        "bool_version", "missing_context", "missing_transform", "unknown_kind"):
+            with self.subTest(variant=variant):
+                changed = copy.deepcopy(data)
+                audit = entry(changed)["decision"]
+                if variant in ("specHash", "sourceItemRevision", "appliesToSourceHash"):
+                    audit[variant] = "0" * 64
+                elif variant == "wrong_action":
+                    audit["action"] = "withdraw"
+                elif variant == "bad_previous":
+                    audit["previousDecisionId"] = UUID
+                elif variant == "unknown_action":
+                    audit["action"] = "execute"
+                elif variant == "extra_field":
+                    audit["userApproved"] = True
+                elif variant == "bool_version":
+                    audit["schemaVersion"] = True
+                elif variant == "missing_context":
+                    del entry(changed)["contextSnapshot"]
+                elif variant == "missing_transform":
+                    del entry(changed)["sourceTransform"]
+                else:
+                    audit["kind"] = "self-approved"
+                with self.assertRaises(native.ReviewContractError):
+                    native.validate_payload(changed)
+
     def test_legacy_context_audit_does_not_gain_authority(self):
         data = reviewed()
         entry(data)["contextSnapshot"] = {"legacyAudit": "non-authoritative"}

@@ -109,6 +109,44 @@ def review_text_list(value):
         review_text(item, 600, required=True)
 
 
+def validate_versioned_review_decision(entry):
+    """Opt-in audit validates a claim, never authenticates a user's click."""
+    record = entry.get("decision")
+    if record is None or "kind" not in record:
+        return
+    review_object(record, ("kind", "schemaVersion", "action", "approvalId",
+                          "decisionId", "sourceItemRevision", "basisSourceHash",
+                          "appliesToSourceHash", "contextHash", "specHash",
+                          "previousDecisionId"))
+    if (record["kind"] != "review-decision-v1" or
+            type(record["schemaVersion"]) is not int or record["schemaVersion"] != 1):
+        raise ReviewContractError("未知版本的决定审计对象")
+    states = {"adopt": "approved", "reconfirm": "approved",
+              "reject": "withdrawn", "withdraw": "withdrawn"}
+    action = record["action"]
+    if not isinstance(action, str) or states.get(action) != entry["state"]:
+        raise ReviewContractError("决定操作与状态不一致")
+    previous = record["previousDecisionId"]
+    if previous is not None:
+        review_uuid(previous)
+    if ((action in ("adopt", "reject") and previous is not None) or
+            (action in ("reconfirm", "withdraw") and previous is None)):
+        raise ReviewContractError("无效的前序决定声明")
+    if (entry["sourceItemRevision"] is None or
+            not isinstance(entry.get("sourceTransform"), dict) or
+            not isinstance(entry.get("contextSnapshot"), dict) or
+            entry["contextSnapshot"].get("kind") != "annotation-context-v1"):
+        raise ReviewContractError("决定必须绑定历史 H0 和当前上下文")
+    for field in ("approvalId", "decisionId", "sourceItemRevision",
+                  "basisSourceHash", "appliesToSourceHash", "contextHash"):
+        expected = entry["spec"]["decisionId"] if field == "decisionId" else entry[field]
+        if record[field] != expected:
+            raise ReviewContractError("决定来源、版本或规格不匹配：" + field)
+    review_hash(record["specHash"])
+    if record["specHash"] != hashlib.sha256(context_json(entry["spec"]).encode("utf-8")).hexdigest():
+        raise ReviewContractError("决定规格摘要不匹配")
+
+
 def validate_review_contract(batch, tasks, image_hashes):
     """校验 v2 的结构和证据关联；不验证来源 H0→H1，不授权开发执行。"""
     if not isinstance(batch, dict) or not isinstance(tasks, dict) or not isinstance(tasks.get("tasks"), list):
@@ -220,6 +258,7 @@ def validate_review_contract(batch, tasks, image_hashes):
             review_hash(hashes[path])
             if image_hashes.get(path) != hashes[path]:
                 raise ReviewContractError("评审证据 hash 与实际图片不一致")
+        validate_versioned_review_decision(entry)
         # B2 binds H1 to current raw source and actual image bytes. It cannot prove
         # that H0, a claimed transformation, or a human approval event is authentic.
         annotation = annotations[int(key)]

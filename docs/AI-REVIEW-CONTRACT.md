@@ -162,3 +162,12 @@ aiTasks (schemaVersion: 2)
 | `STALE_ITEM_REVISION` | 重新读取当前条目；不能把旧建议或结果覆盖新反馈 |
 
 原有图片、路径、磁盘完整性和 Git 验收错误仍保留各自代码。格式不受支持或数据错误时整个同步失败，不能部分采纳后静默丢条目。
+
+## B3d-1a 版本化决定审计与前序检查（不是可信批准）
+
+可选 `decision.kind = "review-decision-v1"` 的字段严格限定为 `kind, schemaVersion, action, approvalId, decisionId, sourceItemRevision, basisSourceHash, appliesToSourceHash, contextHash, specHash, previousDecisionId`。整数 schemaVersion 必须是 1，`adopt/reconfirm` 对应 approved，`reject/withdraw` 对应 withdrawn。首次 adopt/reject 无前序决定，reconfirm/withdraw 必须引用前序决定 UUID。`specHash` 是键排序、无多余空格、保留 Unicode 的完整规格 JSON UTF-8 SHA-256。
+
+结构检查要求声明准确绑定 H0 item revision、H0/H1 来源 hash、`sourceTransform`、`annotation-context-v1` 和规格。在原有项目锁内，后续新版本化决定必须指向当前 HEAD 的前一决定，当前相同决定可幂等同步，已有版本化审计不允许静默降回旧版 opaque 审计。没有 kind 的旧审计仍是无权限声明。
+
+**边界：** 此格式是由调用方提交的审计声明，不是用户真实点击的可验证证据，也不提供签名。浏览器可信事件来源及撤回操作链尚未实现。所有含评审任务继续 `SOURCE_VALIDATION_PENDING` / `executable:false`，v2 send 不开放；不自动调用模型或外发用户数据。
+
