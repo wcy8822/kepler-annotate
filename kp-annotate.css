@@ -85,6 +85,12 @@
 #kp-annotate-root .ka-category-reason{color:var(--ka-muted);margin:6px 0 10px;line-height:1.5}
 #kp-annotate-root .ka-category-suggestion div{display:flex;gap:8px;flex-wrap:wrap}
 #kp-annotate-root .ka-refs{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+#kp-annotate-root .ka-review-draft{border:1px solid var(--ka-line);background:var(--ka-surface);padding:12px 14px;border-radius:10px;margin:14px 0}
+#kp-annotate-root .ka-review-draft h3{margin:0 0 6px}
+#kp-annotate-root .ka-review-draft p{font-size:12px;color:var(--ka-muted)}
+#kp-annotate-root .ka-review-draft textarea{width:100%}
+#kp-annotate-root .ka-review-state{min-height:20px}
+#kp-annotate-root .ka-review-actions{display:flex;flex-wrap:wrap;gap:8px}
 #kp-annotate-root .ka-refs canvas{max-width:120px;max-height:80px;object-fit:contain;border:1px solid var(--ka-line);border-radius:6px}
 #kp-annotate-root .ka-refs span{font-size:12px;overflow-wrap:anywhere}
 #kp-annotate-root :is(.ka-editor,.ka-manager,.ka-codex) footer{justify-content:flex-end;flex-wrap:wrap;padding:20px 0 0}
