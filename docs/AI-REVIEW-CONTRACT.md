@@ -163,6 +163,12 @@ aiTasks (schemaVersion: 2)
 
 原有图片、路径、磁盘完整性和 Git 验收错误仍保留各自代码。格式不受支持或数据错误时整个同步失败，不能部分采纳后静默丢条目。
 
+## B3d-1b 编辑器本机决定草稿（非权威审计）
+
+已保存的 v1 批注可以在原编辑器单独填写建议草稿，并进行 adopt / reject / reconfirm / withdraw 显式操作。扩展后台在自己的串行队列内核查原批次快照、项目/批次/编号、上一决定 ID 和当前原批注 JSON 的 SHA-256，存入单独 Chrome local storage；不会写回 v1 原话、批次、AI 任务或 Native v2 approvedSnapshot。来源变化会令本地历史显示“过期”，而非自动通过。建议历史保存的是用户输入的草稿正文与操作，不是模型推断结果。
+
+这只是用户界面操作记录与内容版本提示，**不是签名、可信人机身份认证、H0→H1 合法转换证明，亦不代表 B3d 可信批准事件链完成**。扩展上下文与用户设备上的代码仍可能影响这些记录；当前仅供本机审阅，不输出可执行规格。所有含评审条目继续 SOURCE_VALIDATION_PENDING、executable:false，v2 send 禁用。
+
 ## B3d-1a 版本化决定审计与前序检查（不是可信批准）
 
 可选 `decision.kind = "review-decision-v1"` 的字段严格限定为 `kind, schemaVersion, action, approvalId, decisionId, sourceItemRevision, basisSourceHash, appliesToSourceHash, contextHash, specHash, previousDecisionId`。整数 schemaVersion 必须是 1，`adopt/reconfirm` 对应 approved，`reject/withdraw` 对应 withdrawn。首次 adopt/reject 无前序决定，reconfirm/withdraw 必须引用前序决定 UUID。`specHash` 是键排序、无多余空格、保留 Unicode 的完整规格 JSON UTF-8 SHA-256。
