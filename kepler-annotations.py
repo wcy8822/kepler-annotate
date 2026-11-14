@@ -24,6 +24,8 @@ def main(argv=None):
     read.add_argument("--project", required=True)
     read.add_argument("--batch", required=True)
     read.add_argument("--since")
+    read.add_argument("--accept-task-contract", type=int, choices=(2,),
+                      help="显式识别 v2 任务语义；不代表批准执行，仍须检查 reviewGate")
     result = commands.add_parser("result", help="登记当前条目版本结果，保留待人工验收状态")
     result.add_argument("--project", required=True)
     result.add_argument("--batch", required=True)
@@ -35,6 +37,8 @@ def main(argv=None):
     result.add_argument("--commit")
     result.add_argument("--checks-file", help="JSON 数组或含 commands/checks 数组的 JSON 对象")
     result.add_argument("--requirements", help="只登记需求文件路径，不读取或生成文件")
+    result.add_argument("--accept-task-contract", type=int, choices=(2,),
+                        help="显式识别 v2 任务语义；不能解除评审来源校验门槛")
     args = parser.parse_args(argv)
     try:
         source = Path(__file__).resolve().parent
@@ -48,13 +52,15 @@ def main(argv=None):
         elif args.command == "batches":
             response = store.batches(args.project)
         elif args.command == "read":
-            response = store.read(args.project, args.batch, since=args.since)
+            response = store.read(args.project, args.batch, since=args.since,
+                                  accept_task_contract=args.accept_task_contract)
         else:
             checks = store_module["read_json"](Path(args.checks_file).absolute()) if args.checks_file else None
             if isinstance(checks, dict):
                 checks = checks.get("commands", checks.get("checks"))
             response = store.result(args.project, args.batch, args.id, args.revision, args.status, args.summary,
-                                    branch=args.branch, commit=args.commit, checks=checks, requirements=args.requirements)
+                                    branch=args.branch, commit=args.commit, checks=checks, requirements=args.requirements,
+                                    accept_task_contract=args.accept_task_contract)
         print(json.dumps(response, ensure_ascii=False, allow_nan=False))
         return 0
     except Exception as error:

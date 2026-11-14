@@ -3,6 +3,43 @@ if (typeof importScripts === 'function') importScripts('kp-annotate-store.js');
 const KEY = ['kp', 'annotate', 'batch', 'v1'].join('-');
 const LIBRARY = 'kp-annotate-library-v1';
 const PROJECT_SYNC = 'kp-annotate-project-sync-v1';
+const REVIEW_DECISIONS = 'kp-annotate-review-decisions-v1';
+async function reviewDecision(data, write) {
+  const lib = await ensureLibrary();
+  if (await snapshot() !== data.expected) throw conflict();
+  if (!Number.isSafeInteger(data.itemId) || data.itemId < 1) throw Error('批注编号无效');
+  const batch = lib.batches.find(b => b.batchId === lib.activeBatchId);
+  const item = batch?.annotations.find(a => a.id === data.itemId);
+  if (!item) throw Error('请先保存批注，再记录建议决定');
+  const key = JSON.stringify([batch.projectId, batch.batchId, item.id]);
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(item)));
+  const sourceSnapshotHash = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2,'0')).join('');
+  const state = (await chrome.storage.local.get(REVIEW_DECISIONS))[REVIEW_DECISIONS] || {schemaVersion:1,records:{}};
+  if (state.schemaVersion !== 1 || !state.records || Array.isArray(state.records) || typeof state.records !== 'object') throw Error('本地建议历史损坏，请先备份');
+  const events = state.records[key] || [];
+  if (!Array.isArray(events) || events.length > 128) throw Error('建议历史无效');
+  const previous = events.at(-1) || null;
+  if (write) {
+    if (!['adopt','reject','reconfirm','withdraw'].includes(data.action)) throw Error('建议决定动作无效');
+    if ((data.previousId ?? null) !== (previous?.id ?? null)) {
+      const error = Error('建议决定已变化，请重新打开编辑器');
+      error.code = 'KP_REVIEW_DECISION_CONFLICT';
+      throw error;
+    }
+    if (!previous && !['adopt','reject'].includes(data.action)) throw Error('首次只能采纳或拒绝');
+    if (previous && !['reconfirm','withdraw'].includes(data.action)) throw Error('后续必须重新确认或撤回');
+    if (data.action === 'withdraw' && !['adopt','reconfirm'].includes(previous?.action)) throw Error('不存在可撤回的采纳');
+    if (events.length === 128) throw Error('本地建议历史已满，请先备份');
+    const proposal = data.action === 'withdraw' ? previous.proposal : data.proposal;
+    if (typeof proposal !== 'string' || !proposal.trim() || proposal.length > 3000) throw Error('建议草稿须为1至3000字');
+    const event = {id:crypto.randomUUID(),action:data.action,projectId:batch.projectId,batchId:batch.batchId,itemId:item.id,sourceSnapshotHash,proposal,previousId:previous?.id || null,createdAt:new Date().toISOString()};
+    if (await snapshot() !== data.expected) throw conflict();
+    state.records[key] = [...events,event];
+    await chrome.storage.local.set({[REVIEW_DECISIONS]:state});
+    return {event,stale:false,count:events.length+1};
+  }
+  return {event:previous,stale:!!previous && previous.sourceSnapshotHash !== sourceSnapshotHash,count:events.length};
+}
 let queue = Promise.resolve(), lastCapture = 0;
 const serial = fn => { const result = queue.then(fn); queue = result.catch(() => {}); return result; };
 const imagePath = key => typeof key === 'string' && /^(shots|refs)\/[\w.-]+\.(png|jpg|webp)$/.test(key);
@@ -279,6 +316,8 @@ async function handle(message, sender) {
     case 'commit': return serial(() => commit(message));
     case 'getAsset': return serial(()=>getBatchAsset(message.batchId,message.key));
     case 'prune': return serial(()=>pruneBatchAssets(message));
+    case 'review-decision-status': return serial(()=>reviewDecision(message,false));
+    case 'review-decision-record': return serial(()=>reviewDecision(message,true));
     case 'codex-info': return serial(()=>codexInfo(message));
     case 'codex-send': return serial(()=>sendToCodex(message));
     case 'project-info': case 'project-bind': case 'project-sync': case 'project-read': return serial(()=>projectRPC(message.op,message));

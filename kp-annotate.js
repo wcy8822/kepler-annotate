@@ -25,6 +25,8 @@
       <dialog class="ka-editor" data-html2canvas-ignore="true" aria-label="编辑批注"><form method="dialog">
         <h2>写批注</h2><p class="ka-target"></p><label>类别<select name="category"><option>视觉</option><option>文案</option><option>交互</option><option>产品逻辑</option><option>反馈/建议</option></select></label><label>处理状态<select name="status"><option>未处理</option><option>处理中</option><option>待验收</option><option>已完成</option></select></label>
         <label>一句话说明<textarea name="text" rows="4" required maxlength="4000" placeholder="希望改成什么样？"></textarea></label>
+        <section class="ka-category-suggestion" hidden aria-label="本地类别建议"><strong></strong><p class="ka-category-reason"></p><div><button type="button" data-action="adopt-category">采用此类别</button><button type="button" data-action="dismiss-category">仅保留当前分类</button></div></section>
+        <section class="ka-review-draft" hidden aria-label="建议草稿与人工决定"><h3>建议草稿 · 仅存本机</h3><p>尚未接入模型。建议可编辑；采纳、拒绝或撤回只记入本地历史，不修改原话、不授权 AI 开发执行。</p><label>待评审建议<textarea name="review-proposal" rows="3" maxlength="3000" placeholder="在此填写或编辑候选建议"></textarea></label><p class="ka-review-state" role="status"></p><div class="ka-review-actions"><button type="button" data-action="review-adopt" hidden>采纳草稿</button><button type="button" data-action="review-reject" hidden>拒绝草稿，仅保留原话</button><button type="button" data-action="review-reconfirm" hidden>重新确认</button><button type="button" data-action="review-withdraw" hidden>撤回采纳</button></div></section>
         <details><summary>补充观察、预期与复现（选填）</summary><label>实际看到什么<textarea name="observed" rows="2" maxlength="4000"></textarea></label><label>希望怎样<textarea name="expected" rows="2" maxlength="4000"></textarea></label><label>如何复现<textarea name="reproduction" rows="2" maxlength="4000"></textarea></label></details><label>参考图 · Ctrl+V / ⌘V 粘贴，或选择图片<input type="file" name="reference" accept="image/*" multiple></label><div class="ka-refs"></div>
         <p class="ka-editor-status" role="status"></p><footer><button type="button" data-action="cancel">取消</button><button type="button" data-action="save">保存批注</button></footer>
       </form></dialog><dialog class="ka-manager" aria-label="批次管理"><form><h2></h2><p class="ka-management-hint"></p><label>名称<input name="management-name" maxlength="80" required></label><p role="status"></p><footer><button type="button" data-action="manage-cancel">取消</button><button type="submit">确定</button></footer></form></dialog><div class="ka-status" role="status" data-html2canvas-ignore="true"></div>`;
@@ -37,6 +39,8 @@
     const $ = s => s.startsWith('.ka-codex') ? (s === '.ka-codex' ? codexDialog : codexShadow.querySelector(s)) : root.querySelector(s), layer = $('.ka-layer'), markers = $('.ka-markers'), editor = $('.ka-editor'), list = $('.ka-list');
     const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     let noticeTimer, freezeTimer, frozen = null, categoryFilter = '', statusFilter = '', selected = new Set(), managementAction = null, managementSnapshot = null;
+    let categorySuggestion = null, dismissedSuggestionKey = null;
+    let reviewStatus = null, reviewLoading = false, reviewGeneration = 0;
     let projectUI;
     let codexSnapshot = null, codexTarget = '', codexTargetEdited = false, codexSubmitter = null, codexRequest = null;
     const categories = ['视觉','文案','交互','产品逻辑','反馈/建议'], statuses = ['未处理','处理中','待验收','已完成'];
@@ -175,12 +179,89 @@
       if(batch.status==='archived')throw Error('本批已归档，请在清单中点击「继续此批」后新增');
       return { batchId:batch.batchId, id:batch.nextId, mode, status:'未处理', category:'视觉', text:'', url:location.href, pageKey:key(), title:document.title || location.hostname, elements, rect, shapes, viewport:{width:innerWidth,height:innerHeight,scrollX,scrollY}, build, ...(frozen ? {snapshot:frozen} : {}), shot:`shots/${String(batch.nextId).padStart(3,'0')}.png`, refs:[], createdAt:new Date().toISOString() };
     }
+
+    function categoryInputs() {
+      return Object.fromEntries(['text','observed','expected','reproduction'].map(field => [field, $('[name=' + field + ']').value]));
+    }
+    function renderCategorySuggestion() {
+      const panel = $('.ka-category-suggestion');
+      categorySuggestion = null;
+      panel.hidden = true;
+      if (!draft || !editor.open) return;
+      const input = categoryInputs(), key = JSON.stringify(input);
+      const candidate = store.suggestCategory(input);
+      if (!candidate || candidate.category === $('[name=category]').value || key === dismissedSuggestionKey) return;
+      categorySuggestion = {...candidate, key};
+      panel.querySelector('strong').textContent = candidate.category + ' · 本地规则候选';
+      panel.querySelector('.ka-category-reason').textContent = candidate.reason + '；仅作分类参考，原话不会被修改。';
+      panel.hidden = false;
+    }
+
+    function showReviewStatus(message = '') {
+      const panel = $('.ka-review-draft');
+      if (!draft?.existing || !editor.open) { panel.hidden = true; return; }
+      panel.hidden = false;
+      const event = reviewStatus?.event, label = panel.querySelector('.ka-review-state');
+      label.textContent = message || (reviewLoading ? '正在读取本机决定…' : !reviewStatus ? '本机历史暂不可用' :
+        !event ? '尚未作出决定；原批注保持不变。' :
+        (reviewStatus.stale ? '原批注版本发生变化，旧决定已过期，请重新确认。' :
+        ({adopt:'已采纳草稿',reject:'已拒绝草稿',reconfirm:'已重新确认',withdraw:'已撤回采纳'}[event.action])) + ' · 非 AI 执行授权');
+      for (const action of ['adopt','reject','reconfirm','withdraw']) {
+        const button = panel.querySelector('[data-action=review-' + action + ']');
+        button.hidden = !reviewStatus || (event ?
+          action === 'reconfirm' ? false :
+          action === 'withdraw' ? !['adopt','reconfirm'].includes(event.action) : true :
+          !['adopt','reject'].includes(action));
+        button.disabled = reviewLoading || busy;
+      }
+    }
+    async function loadReviewStatus() {
+      const generation = ++reviewGeneration;
+      reviewStatus = null; reviewLoading = true;
+      if (!draft?.existing) { reviewLoading = false; showReviewStatus(); return; }
+      const id = draft.id, batchId = draft.batchId, expected = storedSnapshot;
+      showReviewStatus();
+      try {
+        const result = await store.rpc('review-decision-status', {expected,itemId:id});
+        if (generation !== reviewGeneration || !draft || !editor.open || draft.id !== id || draft.batchId !== batchId) return;
+        reviewStatus = result;
+        $('[name=review-proposal]').value = result.event?.proposal || '';
+      } catch (error) {
+        if (generation === reviewGeneration && draft && editor.open) showReviewStatus('读取失败：' + error.message);
+      } finally {
+        if (generation === reviewGeneration) { reviewLoading = false; showReviewStatus(); }
+      }
+    }
+    function reviewAnnotationEdited() {
+      if (!draft?.existing || draft.needsRebase || draft.pendingRefs.length || draft.removedRefs.length) return true;
+      const saved = batch.annotations.find(item => item.id === draft.id);
+      if (!saved || JSON.stringify(draft.refs) !== JSON.stringify(saved.refs)) return true;
+      return ['text','category','status','observed','expected','reproduction'].some(field => {
+        const value = $('[name=' + field + ']').value;
+        const current = ['text','observed','expected','reproduction'].includes(field) ? value.trim() : value;
+        return current !== (saved[field] || (field === 'status' ? '未处理' : ''));
+      });
+    }
+    async function recordReviewAction(reviewAction) {
+      if (reviewLoading || busy || !reviewStatus || !draft?.existing || !editor.open) return;
+      if (reviewAnnotationEdited()) throw Error('原批注有未保存的修改，请先保存并重新打开再决定');
+      const id = draft.id, batchId = draft.batchId, generation = ++reviewGeneration;
+      reviewLoading = true; showReviewStatus('正在保存本机决定…');
+      try {
+        const result = await store.rpc('review-decision-record', {expected:storedSnapshot,itemId:id,action:reviewAction,proposal:$('[name=review-proposal]').value,previousId:reviewStatus.event?.id || null});
+        if (generation === reviewGeneration && draft?.id === id && draft.batchId === batchId) reviewStatus = result;
+      } catch(error) {
+        if (generation === reviewGeneration) showReviewStatus('决定未保存：' + error.message);
+      } finally {
+        if (generation === reviewGeneration) { reviewLoading = false; showReviewStatus(); }
+      }
+    }
     function openDraft(item, existing=false) {
       if (busy) return;
       draft = {...item, batchId:batch.batchId, existing, pendingRefs:[], removedRefs:[]};
       $('.ka-target').textContent = existing ? `编辑 #${item.id} · ${item.elements.map(e=>e.text).join(' → ')}` : item.mode==='reference' ? '改成像这个：'+item.elements.map(e=>e.text).join(' → ') : `#${item.id} · ${item.elements.map(e=>e.text).join(' / ') || '手绘区域'}`;
       for(const field of ['observed','expected','reproduction'])$('[name='+field+']').value=item[field]||''; $('[name=status]').value=item.status||'未处理';
-      $('[name=text]').value=item.text; $('[name=category]').value=item.category; $('.ka-editor-status').textContent=''; $('[name=reference]').value=''; renderRefs(); renderMarks(); editor.showModal(); $('[name=text]').focus();
+      $('[name=text]').value=item.text; $('[name=category]').value=item.category; $('.ka-editor-status').textContent=''; $('[name=reference]').value=''; renderRefs(); renderMarks(); editor.showModal(); dismissedSuggestionKey = null; renderCategorySuggestion(); loadReviewStatus(); $('[name=text]').focus();
     }
     function renderRefs() {
       $('.ka-refs').replaceChildren();
@@ -330,11 +411,22 @@
       } catch (error) { if (codexRequest === request && codexSnapshot === snapshot && dialog.open) dialog.querySelector('.ka-codex-status').textContent = error.message; }
     }
     async function action(event) {
+      // Page scripts can reach the open shadow root; their synthetic clicks must not mutate a batch.
+      // This is a UI guard, not proof of human approval for a v2 review decision.
+      if (!event.isTrusted) return;
       const button=event.target.closest('button');if(!button)return;
       if(button.dataset.mode){setMode(button.dataset.mode);return;}
       if(button.dataset.id||button.dataset.edit){const a=batch.annotations.find(x=>x.id===Number(button.dataset.id||button.dataset.edit));if(a)openDraft(a,true);return;}
       if(button.dataset.delete){if(busy)return;const a=batch.annotations.find(x=>x.id===Number(button.dataset.delete));if(!a||!confirm(`删除批注 #${a.id}？`))return;try{await locked(async()=>{await commit({...batch,annotations:batch.annotations.filter(x=>x!==a)});await store.clearAssets([a.shot,...a.refs]);});renderMarks();renderList();}catch(e){notice('删除失败：'+e.message);}return;}
       const type=button.dataset.action;
+      if(type==='adopt-category' || type==='dismiss-category') {
+        if (!event.isTrusted || busy || !draft || !editor.open || !categorySuggestion ||
+            categorySuggestion.key !== JSON.stringify(categoryInputs())) { renderCategorySuggestion(); return; }
+        if (type === 'adopt-category') $('[name=category]').value = categorySuggestion.category;
+        else dismissedSuggestionKey = categorySuggestion.key;
+        renderCategorySuggestion(); return;
+      }
+      if (['review-adopt','review-reject','review-reconfirm','review-withdraw'].includes(type)) { await recordReviewAction(type.slice(7)); return; }
       if(type==='list')toggleList();
       if(type==='freeze-delay')delayedFreeze();
       if(type==='unfreeze')setMode('browse');
@@ -405,10 +497,17 @@
       }
     });
     root.addEventListener('click',event=>{action(event).catch(e=>notice(e.message));});
+    editor.addEventListener('input', event => {
+      if (['text','observed','expected','reproduction'].includes(event.target?.name)) renderCategorySuggestion();
+    });
+    editor.addEventListener('change', event => {
+      if (event.target?.name === 'category') renderCategorySuggestion();
+    });
     $('[name=reference]').addEventListener('change',event=>addRefs(event.target.files));
     editor.addEventListener('paste',event=>{const files=[...(event.clipboardData?.items || [])].filter(x=>x.kind==='file').map(x=>x.getAsFile()).filter(Boolean);if(files.length){event.preventDefault();addRefs(files);}});
     editor.addEventListener('cancel',event=>{event.preventDefault();if(!busy){draft=null;editor.close();refreshBatch();setMode('browse');renderList();}});
-    editor.querySelector('form').addEventListener('submit',event=>{event.preventDefault();saveDraft();});
+    // Implicit or scripted form submission must never bypass the explicit Save button.
+    editor.querySelector('form').addEventListener('submit',event=>event.preventDefault());
     document.addEventListener('keydown',event=>{
       if(event.altKey&&event.shiftKey&&event.code==='KeyS'&&enabled&&!editor.open){event.preventDefault();event.stopImmediatePropagation();freezePage().catch(error=>notice('定格失败：'+error.message));}
       else if(event.altKey&&event.code==='KeyA'){event.preventDefault();toggle();}
