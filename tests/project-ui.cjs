@@ -62,13 +62,21 @@ async function save(page,text){const ui=page.locator('#kp-annotate-host');await 
       const normal=await reviewDecision({expected:raw,itemId:item.id},false);
       await assets('readwrite',[[assetKey,replacement]]);
       const changed=await reviewDecision({expected:raw,itemId:item.id},false);
-      return {normal:normal.stale,changed:changed.stale,normalHash:normal.event.sourceHash};
+      let rejected=null;
+      try {
+        await reviewDecision({expected:raw,itemId:item.id,action:'reconfirm',proposal:'来自旧图片的决定必须拒绝',previousId:normal.event.id,expectedSourceHash:normal.sourceHash},true);
+      } catch(error) { rejected=error.code; }
+      const state=(await chrome.storage.local.get(REVIEW_DECISIONS))[REVIEW_DECISIONS];
+      return {normal:normal.stale,changed:changed.stale,normalHash:normal.event.sourceHash,rejected,
+        unchanged:state.records[JSON.stringify([batch.projectId,batch.batchId,item.id])].length===3};
     } finally {
       await assets('readwrite',[[assetKey,original]]);
     }
   });
   assert.equal(tamper.normal,false,'原图片与来源摘要一致');
   assert.equal(tamper.changed,true,'图片内容变化但批注 JSON 不变时旧决定必须失效');
+  assert.equal(tamper.rejected,'KP_REVIEW_SOURCE_CONFLICT','界面读取后图片被替换，旧来源令牌不得写入新决定');
+  assert.equal(tamper.unchanged,true,'冲突不能添加任何审计事件');
   assert.equal(tamper.normalHash,records[2].sourceHash);
   const saved=await worker.evaluate(async()=>JSON.parse(await snapshot()));
   assert.equal(saved.annotations[0].text,'请将标题改为新文案');

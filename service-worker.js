@@ -39,6 +39,11 @@ async function reviewDecision(data, write) {
   if (!Array.isArray(events) || events.length > 128) throw Error('建议历史无效');
   const previous = events.at(-1) || null;
   if (write) {
+    if (data.expectedSourceHash !== sourceHash) {
+      const error = Error('批注或图片在查看后发生变化，请重新读取最新来源再决定');
+      error.code = 'KP_REVIEW_SOURCE_CONFLICT';
+      throw error;
+    }
     if (!['adopt','reject','reconfirm','withdraw'].includes(data.action)) throw Error('建议决定动作无效');
     if ((data.previousId ?? null) !== (previous?.id ?? null)) {
       const error = Error('建议决定已变化，请重新打开编辑器');
@@ -55,13 +60,13 @@ async function reviewDecision(data, write) {
     if (await snapshot() !== data.expected) throw conflict();
     state.records[key] = [...events,event];
     await chrome.storage.local.set({[REVIEW_DECISIONS]:state});
-    return {event,stale:false,count:events.length+1};
+    return {event,stale:false,count:events.length+1,sourceHash};
   }
   return {event:previous,stale:!!previous && (
     previous.sourceSnapshotHash !== sourceSnapshotHash ||
     previous.sourceHash !== sourceHash ||
     JSON.stringify(previous.evidenceHashes) !== JSON.stringify(evidenceHashes)
-  ),count:events.length};
+  ),count:events.length,sourceHash};
 }
 let queue = Promise.resolve(), lastCapture = 0;
 const serial = fn => { const result = queue.then(fn); queue = result.catch(() => {}); return result; };

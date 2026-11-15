@@ -248,7 +248,7 @@
       const id = draft.id, batchId = draft.batchId, generation = ++reviewGeneration;
       reviewLoading = true; showReviewStatus('正在保存本机决定…');
       try {
-        const result = await store.rpc('review-decision-record', {expected:storedSnapshot,itemId:id,action:reviewAction,proposal:$('[name=review-proposal]').value,previousId:reviewStatus.event?.id || null});
+        const result = await store.rpc('review-decision-record', {expected:storedSnapshot,itemId:id,action:reviewAction,proposal:$('[name=review-proposal]').value,previousId:reviewStatus.event?.id || null,expectedSourceHash:reviewStatus.sourceHash});
         if (generation === reviewGeneration && draft?.id === id && draft.batchId === batchId) reviewStatus = result;
       } catch(error) {
         if (generation === reviewGeneration) showReviewStatus('决定未保存：' + error.message);

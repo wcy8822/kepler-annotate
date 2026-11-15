@@ -169,6 +169,12 @@ aiTasks (schemaVersion: 2)
 
 这只是**本机来源完整性**检查，不是人机身份认证、签名或 Native `approvedSnapshot` 授权。尚未绑定 Native 精确 item revision、H0→H1 合法转换和用户批准事件来源。所有含评审任务继续 `SOURCE_VALIDATION_PENDING`、`executable:false`，v2 send 保持禁用。图片字节与本机事件记录不自动外发；合成 Chromium 验证篡改/恢复，真实设备和 Native Messaging 待验收。
 
+## B3d-1d 本机决定的 H1 乐观并发校验（2026-11-15）
+
+原编辑器读取本地决定状态时同时取得后台对当前原始批注与实际截图/参考图字节计算的规范化 `sourceHash`。保存人工决定时必须回传 `expectedSourceHash`，后台在串行操作中重新计算；来源在查看与决定之间变化则返回 `KP_REVIEW_SOURCE_CONFLICT` 且**不写入任何事件**。即使图片路径及原始批注 JSON 未变，仅图片实际字节被替换，也不能凭旧查看结果绑定新来源。没有此回执的写入拒绝，老历史保留且按既有过期规则读取。
+
+这是本地来源版本竞态防护，不代表用户身份认证或正式批准，也**不**连接 Native 的 H0→H1 可信批准事件。所有含 v2 评审的任务仍然 `SOURCE_VALIDATION_PENDING` / `executable:false`，v2 send 保持禁用。
+
 ## B3d-1b 编辑器本机决定草稿（非权威审计）
 
 已保存的 v1 批注可以在原编辑器单独填写建议草稿，并进行 adopt / reject / reconfirm / withdraw 显式操作。扩展后台在自己的串行队列内核查原批次快照、项目/批次/编号、上一决定 ID 和当前原批注 JSON 的 SHA-256，存入单独 Chrome local storage；不会写回 v1 原话、批次、AI 任务或 Native v2 approvedSnapshot。来源变化会令本地历史显示“过期”，而非自动通过。建议历史保存的是用户输入的草稿正文与操作，不是模型推断结果。
