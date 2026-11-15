@@ -51,6 +51,25 @@ async function save(page,text){const ui=page.locator('#kp-annotate-host');await 
   assert.equal(records[1].previousId,records[0].id);
   assert.equal(records[2].previousId,records[1].id);
   assert.equal(records[2].sourceSnapshotHash,records[0].sourceSnapshotHash);
+  assert.match(records[2].sourceHash,/^[a-f0-9]{64}$/,'规范化 H1 来源摘要已绑定');
+  assert.match(records[2].evidenceHashes['shots/001.png'],/^[a-f0-9]{64}$/,'截图实际字节已计算 SHA-256');
+  const tamper=await worker.evaluate(async()=>{
+    const raw=await snapshot(), batch=JSON.parse(raw), item=batch.annotations[0];
+    const assetKey=physicalPath(batch.batchId,item.shot);
+    const original=(await assets('readonly',[[assetKey]]))[assetKey];
+    const replacement='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l24AAAAASUVORK5CYII=';
+    try {
+      const normal=await reviewDecision({expected:raw,itemId:item.id},false);
+      await assets('readwrite',[[assetKey,replacement]]);
+      const changed=await reviewDecision({expected:raw,itemId:item.id},false);
+      return {normal:normal.stale,changed:changed.stale,normalHash:normal.event.sourceHash};
+    } finally {
+      await assets('readwrite',[[assetKey,original]]);
+    }
+  });
+  assert.equal(tamper.normal,false,'原图片与来源摘要一致');
+  assert.equal(tamper.changed,true,'图片内容变化但批注 JSON 不变时旧决定必须失效');
+  assert.equal(tamper.normalHash,records[2].sourceHash);
   const saved=await worker.evaluate(async()=>JSON.parse(await snapshot()));
   assert.equal(saved.annotations[0].text,'请将标题改为新文案');
   assert.equal(saved.approvedSnapshot,undefined);

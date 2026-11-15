@@ -163,6 +163,12 @@ aiTasks (schemaVersion: 2)
 
 原有图片、路径、磁盘完整性和 Git 验收错误仍保留各自代码。格式不受支持或数据错误时整个同步失败，不能部分采纳后静默丢条目。
 
+## B3d-1c 本机事件绑定 H1 与实际图片（2026-11-15）
+
+原编辑器本地决定事件在后台读取当前已保存截图/参考图（IndexedDB 的 data URL），**解码实际图片字节**后逐项计算 SHA-256，并通过已有 `review-source.js` 生成与 Python `review_source.py` 同口径的 `sourceHash`。新增本地事件字段 `sourceHash` 和 `evidenceHashes`，保留原有 `sourceSnapshotHash`、前序 ID、建议原文、v1 批注。读取时重新哈希，即使路径、原话 JSON 未变化，图片字节不同也会判为过期；缺失或格式错误的图片保守拒绝新决定。旧本机记录没有新增字段时保留历史但标记过期，需显式重新确认，不自动补签。
+
+这只是**本机来源完整性**检查，不是人机身份认证、签名或 Native `approvedSnapshot` 授权。尚未绑定 Native 精确 item revision、H0→H1 合法转换和用户批准事件来源。所有含评审任务继续 `SOURCE_VALIDATION_PENDING`、`executable:false`，v2 send 保持禁用。图片字节与本机事件记录不自动外发；合成 Chromium 验证篡改/恢复，真实设备和 Native Messaging 待验收。
+
 ## B3d-1b 编辑器本机决定草稿（非权威审计）
 
 已保存的 v1 批注可以在原编辑器单独填写建议草稿，并进行 adopt / reject / reconfirm / withdraw 显式操作。扩展后台在自己的串行队列内核查原批次快照、项目/批次/编号、上一决定 ID 和当前原批注 JSON 的 SHA-256，存入单独 Chrome local storage；不会写回 v1 原话、批次、AI 任务或 Native v2 approvedSnapshot。来源变化会令本地历史显示“过期”，而非自动通过。建议历史保存的是用户输入的草稿正文与操作，不是模型推断结果。

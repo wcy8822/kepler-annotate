@@ -1,9 +1,26 @@
 'use strict';
-if (typeof importScripts === 'function') importScripts('kp-annotate-store.js');
+if (typeof importScripts === 'function') importScripts('kp-annotate-store.js', 'review-source.js');
 const KEY = ['kp', 'annotate', 'batch', 'v1'].join('-');
 const LIBRARY = 'kp-annotate-library-v1';
 const PROJECT_SYNC = 'kp-annotate-project-sync-v1';
 const REVIEW_DECISIONS = 'kp-annotate-review-decisions-v1';
+async function reviewImageHashes(batchId, item) {
+  const paths = [item.shot, ...(item.refs || [])].filter(Boolean);
+  const hashes = {};
+  for (const path of paths) {
+    if (!imagePath(path) || Object.hasOwn(hashes, path)) throw Error('评审图片引用无效或重复');
+    const dataURL = await getBatchAsset(batchId, path);
+    if (typeof dataURL !== 'string' || !/^data:image\/(?:png|jpeg|webp);base64,/.test(dataURL)) {
+      throw Error('评审图片缺失或格式无效，不能记录新决定');
+    }
+    // fetch(data:) 仅解码 IndexedDB 图片，不发起远端请求。
+    const response = await fetch(dataURL);
+    if (!response.ok) throw Error('评审图片解码失败');
+    const digest = await crypto.subtle.digest('SHA-256', await response.arrayBuffer());
+    hashes[path] = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  return hashes;
+}
 async function reviewDecision(data, write) {
   const lib = await ensureLibrary();
   if (await snapshot() !== data.expected) throw conflict();
@@ -14,6 +31,8 @@ async function reviewDecision(data, write) {
   const key = JSON.stringify([batch.projectId, batch.batchId, item.id]);
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(item)));
   const sourceSnapshotHash = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2,'0')).join('');
+  const evidenceHashes = await reviewImageHashes(batch.batchId, item);
+  const sourceHash = await globalThis.KPReviewSource.sourceHash(item, evidenceHashes);
   const state = (await chrome.storage.local.get(REVIEW_DECISIONS))[REVIEW_DECISIONS] || {schemaVersion:1,records:{}};
   if (state.schemaVersion !== 1 || !state.records || Array.isArray(state.records) || typeof state.records !== 'object') throw Error('本地建议历史损坏，请先备份');
   const events = state.records[key] || [];
@@ -32,13 +51,17 @@ async function reviewDecision(data, write) {
     if (events.length === 128) throw Error('本地建议历史已满，请先备份');
     const proposal = data.action === 'withdraw' ? previous.proposal : data.proposal;
     if (typeof proposal !== 'string' || !proposal.trim() || proposal.length > 3000) throw Error('建议草稿须为1至3000字');
-    const event = {id:crypto.randomUUID(),action:data.action,projectId:batch.projectId,batchId:batch.batchId,itemId:item.id,sourceSnapshotHash,proposal,previousId:previous?.id || null,createdAt:new Date().toISOString()};
+    const event = {id:crypto.randomUUID(),action:data.action,projectId:batch.projectId,batchId:batch.batchId,itemId:item.id,sourceSnapshotHash,sourceHash,evidenceHashes,proposal,previousId:previous?.id || null,createdAt:new Date().toISOString()};
     if (await snapshot() !== data.expected) throw conflict();
     state.records[key] = [...events,event];
     await chrome.storage.local.set({[REVIEW_DECISIONS]:state});
     return {event,stale:false,count:events.length+1};
   }
-  return {event:previous,stale:!!previous && previous.sourceSnapshotHash !== sourceSnapshotHash,count:events.length};
+  return {event:previous,stale:!!previous && (
+    previous.sourceSnapshotHash !== sourceSnapshotHash ||
+    previous.sourceHash !== sourceHash ||
+    JSON.stringify(previous.evidenceHashes) !== JSON.stringify(evidenceHashes)
+  ),count:events.length};
 }
 let queue = Promise.resolve(), lastCapture = 0;
 const serial = fn => { const result = queue.then(fn); queue = result.catch(() => {}); return result; };
