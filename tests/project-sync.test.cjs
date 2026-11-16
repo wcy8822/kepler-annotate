@@ -24,7 +24,7 @@ function setup(shared){
   if(message.op==='project-read')return structuredClone(copies.get(projectId+':'+message.batchId).result);
   throw Error('本测试禁止发送或queue：'+message.op);
  };
- const c=vm.createContext({chrome,crypto:require('node:crypto').webcrypto,URL,URLSearchParams,setTimeout,Date,AbortSignal,fetch,console});
+ const c=vm.createContext({chrome,crypto:require('node:crypto').webcrypto,TextEncoder,URL,URLSearchParams,setTimeout,Date,AbortSignal,fetch,console});
  c.importScripts=file=>vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),c);
  vm.runInContext(fs.readFileSync(path.join(__dirname,'../service-worker.js'),'utf8'),c);
  c.memoryAssets=async(mode,entries)=>{const result={};for(const [key,value]of entries){if(mode==='readonly')result[key]=pictures.get(key);else if(value===null)pictures.delete(key);else pictures.set(key,value);}return result;};
@@ -38,7 +38,7 @@ test('项目RPC从当前快照取身份，绑定后同步原话、helpers及全�
  const s=await prepared(),expected=await s.raw();const info=await s.rpc('project-info',{expected,projectId:'伪造'});assert.equal(info.binding,null);
  await s.rpc('project-bind',{expected,projectId:'伪造',projectRoot:'/tmp/project-a'});
  const sent=s.calls.filter(c=>c.op==='project-sync').at(-1);assert.equal(sent.batch.projectId,'default');assert.equal(sent.aiTasks.tasks[0].rawComment,'用户原话');assert(sent.markdown.includes('用户原话'));assert.equal(sent.assets['shots/001.png'],image);assert.equal(sent.assets['refs/a.png'],image);
- const current=await s.rpc('project-info',{expected});assert.equal(current.binding.projectRoot,'/tmp/project-a');assert.equal(current.sync.state,'synced');assert.equal(await s.raw(),expected);
+ const current=await s.rpc('project-info',{expected});assert.equal(current.binding.projectRoot,'/tmp/project-a');assert.equal(current.sync.state,'synced');assert.match(current.sync.batchSnapshotHash,/^[a-f0-9]{64}$/,'同步回执绑定当前浏览器批次原始字节');assert.equal(await s.raw(),expected);
 });
 test('已绑定项目自动同步增改删，commit返回原raw，状态metadata不触发循环',async()=>{
  const s=await prepared();await s.rpc('project-bind',{expected:await s.raw(),projectRoot:'/tmp/project-a'});s.calls.length=0;
