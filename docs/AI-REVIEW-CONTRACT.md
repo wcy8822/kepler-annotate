@@ -62,6 +62,12 @@ Native `project-sync` 与历史快照读取现调用 B1 Python 来源规范化�
 
 **这不是用户批准身份或来源的密码学证明**：浏览器自动化、扩展内部代码及用户设备上具有相应权限的程序仍可能发起被浏览器标记为 trusted 的操作，数据存储接口也不是隔离的签名服务。该改动只收紧 UI 动作入口，既不创建可信批准事件，也不开放 `SOURCE_VALIDATION_PENDING` / `executable:false` 或 v2 send。完整 B3d 仍须在受控的扩展上下文中形成可追溯的批准/拒绝/撤回事件，绑定 H0/H1、图片、上下文和精确版本。
 
+### B3d-1e 浏览器本地决定的 Native 版本见证（2026-11-16）
+
+为已有的独立浏览器决定记录新增可空的 `nativeBatchRevision` / `nativeItemRevision`，只在上一次成功的当前批次 Native 同步回执附有浏览器批次 SHA-256，且记录决定时**只读** Native `project-read` 返回同一项目、批次、目录、HEAD 与完整合法的 item revision 集合时填充。旧事件保持原样，不追认；未安装、离线、回执旧格式、HEAD 不同或批次已编辑时为 null，不能把旧批次 cursor 当作条目 revision。此记录保持在 `kp-annotate-review-decisions-v1` 本地键，不添加到 v1 数据/ZIP、Native v2 `approvedSnapshot` 或开发任务。
+
+本地同步回执不能单独认证用户操作；即使现场校验了 Native item revision，也**只说明关联了该时刻的项目条目版本**，不能证明用户批准、来源合法转换或事件不可篡改。`sourceBindingValidation:false`、`reviewExecution:false`、`SOURCE_VALIDATION_PENDING`、`executable:false` 与 v2 send 禁用保持不变。
+
 ## 版本与能力
 
 `info.capabilities` 声明 `taskContracts: [1, 2]`、`reviewTaskValidation: "structure_and_evidence"`、`sourceBindingValidation: false`、`reviewExecution: false`。这表示主机能保留并校验格式和图片关联，不表示能够验证批准来源，更不表示已内置模型。

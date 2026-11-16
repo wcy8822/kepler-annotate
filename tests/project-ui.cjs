@@ -20,7 +20,7 @@ async function save(page,text){const ui=page.locator('#kp-annotate-host');await 
  const chrome=browserExecutablePath();
  context=await chromium.launchPersistentContext(profile,{executablePath:chrome,headless:true,args:['--enable-unsafe-extension-debugging','--disable-extensions-except='+dir,'--load-extension='+dir],viewport:{width:1440,height:1000}});
  worker=context.serviceWorkers()[0]||await context.waitForEvent('serviceworker');id=worker.url().split('/')[2];cdp=await context.browser().newBrowserCDPSession();
- await worker.evaluate(testThread=>{globalThis.projectBinding=null;globalThis.projectPayloads=[];globalThis.projectResults=[];globalThis.projectFail=false;chrome.runtime.sendNativeMessage=async(host,m)=>{if(globalThis.projectFail)throw Error('Native host has exited.');if(m.op==='project-info')return{ok:true,binding:globalThis.projectBinding};if(m.op==='project-bind'){globalThis.projectBinding={projectId:m.projectId,projectName:m.projectName,projectRoot:m.projectRoot};return{ok:true,binding:globalThis.projectBinding};}if(m.op==='project-sync'){if(!globalThis.projectBinding)return{ok:true,bound:false};globalThis.projectPayloads.push(m);return{ok:true,bound:true,projectRoot:globalThis.projectBinding.projectRoot,batchId:m.batch.batchId,revision:'batch-version',items:m.batch.annotations.map(a=>({id:a.id,revision:'item-'+a.text,result:globalThis.projectResults.find(r=>r.id===a.id&&r.revision==='item-'+a.text)||null}))};}if(m.op==='project-read'){const m=globalThis.projectPayloads.at(-1);return{ok:true,binding:globalThis.projectBinding,bound:!!globalThis.projectBinding,projectRoot:globalThis.projectBinding?.projectRoot,batchId:m?.batch.batchId,revision:'batch-version',items:(m?.batch.annotations||[]).map(a=>({id:a.id,revision:'item-'+a.text,result:globalThis.projectResults.find(r=>r.id===a.id&&r.revision==='item-'+a.text)||null}))};}return{ok:true,defaultThread:testThread};};},TEST_THREAD_UUID);
+ await worker.evaluate(testThread=>{globalThis.projectBinding=null;globalThis.projectPayloads=[];globalThis.projectResults=[];globalThis.projectFail=false;globalThis.nativeDifferentRevision=false;chrome.runtime.sendNativeMessage=async(host,m)=>{if(globalThis.projectFail)throw Error('Native host has exited.');if(m.op==='project-info')return{ok:true,binding:globalThis.projectBinding};if(m.op==='project-bind'){globalThis.projectBinding={projectId:m.projectId,projectName:m.projectName,projectRoot:m.projectRoot};return{ok:true,binding:globalThis.projectBinding};}if(m.op==='project-sync'){if(!globalThis.projectBinding)return{ok:true,bound:false};globalThis.projectPayloads.push(m);return{ok:true,bound:true,projectRoot:globalThis.projectBinding.projectRoot,batchId:m.batch.batchId,revision:'c'.repeat(64),items:m.batch.annotations.map(a=>({id:a.id,revision:(a.text==='请将标题改为新文案'?'a':'b').repeat(64),result:globalThis.projectResults.find(r=>r.id===a.id&&r.revision===(a.text==='请将标题改为新文案'?'a':'b').repeat(64))||null}))};}if(m.op==='project-read'){const m=globalThis.projectPayloads.at(-1);return{ok:true,binding:globalThis.projectBinding,bound:!!globalThis.projectBinding,projectId:globalThis.projectBinding?.projectId,projectRoot:globalThis.projectBinding?.projectRoot,batchId:m?.batch.batchId,revision:(globalThis.nativeDifferentRevision?'d':'c').repeat(64),items:(m?.batch.annotations||[]).map(a=>({id:a.id,revision:(a.text==='请将标题改为新文案'?'a':'b').repeat(64),result:globalThis.projectResults.find(r=>r.id===a.id&&r.revision===(a.text==='请将标题改为新文案'?'a':'b').repeat(64))||null}))};}return{ok:true,defaultThread:testThread};};},TEST_THREAD_UUID);
  const page=await context.newPage();await page.goto('http://127.0.0.1:'+server.address().port+'/');const target=(await cdp.send('Target.getTargets',{filter:[{type:'tab',exclude:false}]})).targetInfos.find(t=>t.url===page.url());await cdp.send('Extensions.triggerAction',{id,targetId:target.targetId});
  const ui=page.locator('#kp-annotate-host');
  await check('项目本地入口保留原项目批次管理',async()=>{await ui.locator('[data-action=project]').waitFor({timeout:2000});await ui.locator('[data-action=list]').first().click();assert.equal(await ui.locator('[name=project]').count(),1);assert.equal(await ui.locator('[name=batch]').count(),1);});
@@ -52,6 +52,8 @@ async function save(page,text){const ui=page.locator('#kp-annotate-host');await 
   assert.equal(records[2].previousId,records[1].id);
   assert.equal(records[2].sourceSnapshotHash,records[0].sourceSnapshotHash);
   assert.match(records[2].sourceHash,/^[a-f0-9]{64}$/,'规范化 H1 来源摘要已绑定');
+  assert.equal(records[2].nativeItemRevision,'a'.repeat(64),'本地决定记录了真实同步后的精确 Native 条目版本');
+  assert.equal(records[2].nativeBatchRevision,'c'.repeat(64),'本地决定记录了所核对的 Native 批次版本');
   assert.match(records[2].evidenceHashes['shots/001.png'],/^[a-f0-9]{64}$/,'截图实际字节已计算 SHA-256');
   const tamper=await worker.evaluate(async()=>{
     const raw=await snapshot(), batch=JSON.parse(raw), item=batch.annotations[0];
@@ -73,6 +75,20 @@ async function save(page,text){const ui=page.locator('#kp-annotate-host');await 
       await assets('readwrite',[[assetKey,original]]);
     }
   });
+  const bindingCheck=await worker.evaluate(async()=>{
+    const raw=await snapshot(), batch=JSON.parse(raw);
+    const linked=await reviewNativeLink(batch,raw,1);
+    globalThis.nativeDifferentRevision=true;
+    const mismatched=await reviewNativeLink(batch,raw,1);
+    globalThis.nativeDifferentRevision=false;
+    globalThis.projectFail=true;
+    const offline=await reviewNativeLink(batch,raw,1);
+    globalThis.projectFail=false;
+    return {linked,mismatched,offline};
+  });
+  assert.equal(bindingCheck.linked?.itemRevision,'a'.repeat(64));
+  assert.equal(bindingCheck.mismatched,null,'Native HEAD 变化后不能复用上次同步的版本回执');
+  assert.equal(bindingCheck.offline,null,'Native 断连不得伪造条目版本');
   assert.equal(tamper.normal,false,'原图片与来源摘要一致');
   assert.equal(tamper.changed,true,'图片内容变化但批注 JSON 不变时旧决定必须失效');
   assert.equal(tamper.rejected,'KP_REVIEW_SOURCE_CONFLICT','界面读取后图片被替换，旧来源令牌不得写入新决定');
@@ -112,7 +128,7 @@ async function save(page,text){const ui=page.locator('#kp-annotate-host');await 
   assert.equal(await ui.locator('[name=text]').inputValue(),'文字错误需要调整');
   await ui.locator('[data-action=cancel]').click();
  });
- await check('AI回写显示待验收、说明及提交，不自动替用户完成',async()=>{await worker.evaluate(()=>{projectResults=[{id:1,revision:'item-请将标题改为新文案',status:'待验收',summary:'标题已改，等待验收',branch:'codex/annotation-fixture',commit:'a'.repeat(40),checks:[{command:'node check.cjs',exitCode:0}]}];});await ui.locator('[data-action=project-read]').click();await ui.locator('.ka-ai-result').filter({hasText:'待验收'}).waitFor();assert((await ui.locator('.ka-ai-result').textContent()).includes('标题已改'));assert((await ui.locator('article a').first().textContent()).includes('未处理'));await page.screenshot({path:path.join(output,'ai-result-visible.png')});});
+ await check('AI回写显示待验收、说明及提交，不自动替用户完成',async()=>{await worker.evaluate(()=>{projectResults=[{id:1,revision:'a'.repeat(64),status:'待验收',summary:'标题已改，等待验收',branch:'codex/annotation-fixture',commit:'a'.repeat(40),checks:[{command:'node check.cjs',exitCode:0}]}];});await ui.locator('[data-action=project-read]').click();await ui.locator('.ka-ai-result').filter({hasText:'待验收'}).waitFor();assert((await ui.locator('.ka-ai-result').textContent()).includes('标题已改'));assert((await ui.locator('article a').first().textContent()).includes('未处理'));await page.screenshot({path:path.join(output,'ai-result-visible.png')});});
  await check('修改原话后旧AI结果立即失效；查询故障保留浏览器批注',async()=>{await ui.locator('[data-edit="1"]').click();await ui.locator('[name=text]').fill('请改成另一标题');await ui.locator('[data-action=save]').click();await ui.locator('.ka-editor').waitFor({state:'hidden'});assert.equal(await ui.locator('.ka-ai-result').count(),0);await worker.evaluate(()=>{projectFail=true;});await ui.locator('[data-action=project-read]').click();await ui.locator('.ka-project-summary').filter({hasText:'保留'}).waitFor();assert.equal(await worker.evaluate(async()=>JSON.parse(await snapshot()).annotations.length),1);await worker.evaluate(()=>{projectFail=false;});
   await ui.locator('[data-edit="1"]').click();
   await ui.locator('.ka-review-state').filter({hasText:'旧决定已过期'}).waitFor();

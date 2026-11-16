@@ -21,6 +21,38 @@ async function reviewImageHashes(batchId, item) {
   }
   return hashes;
 }
+async function sha256Text(value) {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+// A read-only Native receipt is evidence of a local item revision, NOT proof
+// of the human decision. Unavailable or changed hosts leave the decision local.
+async function reviewNativeLink(batch, raw, itemId) {
+  const saved = (await chrome.storage.local.get(PROJECT_SYNC))[PROJECT_SYNC] || {};
+  const sync = saved[batch.projectId];
+  if (sync?.state !== 'synced' || sync.batchId !== batch.batchId ||
+      sync.batchSnapshotHash !== await sha256Text(raw) ||
+      !/^[a-f0-9]{64}$/.test(sync.revision || '') || !sync.projectRoot) return null;
+  let native;
+  try {
+    native = await nativeCodex({op:'project-read', projectId:batch.projectId, batchId:batch.batchId});
+  } catch (_) {
+    return null; // Offline manual decisions remain usable, but unbound.
+  }
+  if (native.bound !== true || native.projectId !== batch.projectId ||
+      native.batchId !== batch.batchId || native.projectRoot !== sync.projectRoot ||
+      native.revision !== sync.revision || !Array.isArray(native.items) ||
+      native.items.length !== batch.annotations.length) return null;
+  const ids = new Set(batch.annotations.map(item => item.id)), seen = new Set();
+  for (const item of native.items) {
+    if (!ids.has(item.id) || seen.has(item.id) ||
+        typeof item.revision !== 'string' || !/^[a-f0-9]{64}$/.test(item.revision)) return null;
+    seen.add(item.id);
+  }
+  return {batchRevision:native.revision, itemRevision:native.items.find(item => item.id === itemId).revision};
+}
+
 async function reviewDecision(data, write) {
   const lib = await ensureLibrary();
   if (await snapshot() !== data.expected) throw conflict();
@@ -29,8 +61,7 @@ async function reviewDecision(data, write) {
   const item = batch?.annotations.find(a => a.id === data.itemId);
   if (!item) throw Error('请先保存批注，再记录建议决定');
   const key = JSON.stringify([batch.projectId, batch.batchId, item.id]);
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(item)));
-  const sourceSnapshotHash = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2,'0')).join('');
+  const sourceSnapshotHash = await sha256Text(JSON.stringify(item));
   const evidenceHashes = await reviewImageHashes(batch.batchId, item);
   const sourceHash = await globalThis.KPReviewSource.sourceHash(item, evidenceHashes);
   const state = (await chrome.storage.local.get(REVIEW_DECISIONS))[REVIEW_DECISIONS] || {schemaVersion:1,records:{}};
@@ -56,7 +87,8 @@ async function reviewDecision(data, write) {
     if (events.length === 128) throw Error('本地建议历史已满，请先备份');
     const proposal = data.action === 'withdraw' ? previous.proposal : data.proposal;
     if (typeof proposal !== 'string' || !proposal.trim() || proposal.length > 3000) throw Error('建议草稿须为1至3000字');
-    const event = {id:crypto.randomUUID(),action:data.action,projectId:batch.projectId,batchId:batch.batchId,itemId:item.id,sourceSnapshotHash,sourceHash,evidenceHashes,proposal,previousId:previous?.id || null,createdAt:new Date().toISOString()};
+    const nativeLink = await reviewNativeLink(batch, data.expected, item.id);
+    const event = {id:crypto.randomUUID(),action:data.action,projectId:batch.projectId,batchId:batch.batchId,itemId:item.id,sourceSnapshotHash,sourceHash,evidenceHashes,proposal,previousId:previous?.id || null,nativeBatchRevision:nativeLink?.batchRevision || null,nativeItemRevision:nativeLink?.itemRevision || null,createdAt:new Date().toISOString()};
     if (await snapshot() !== data.expected) throw conflict();
     state.records[key] = [...events,event];
     await chrome.storage.local.set({[REVIEW_DECISIONS]:state});
@@ -269,7 +301,7 @@ async function checkProjectSnapshot(expected) {
 }
 async function projectSyncState(projectId,state,message,result={}) {
   const value={projectId,state,message,updatedAt:new Date().toISOString()};
-  for(const key of ['projectRoot','batchId','revision'])if(result[key]!==undefined)value[key]=result[key];
+  for(const key of ['projectRoot','batchId','revision','batchSnapshotHash'])if(result[key]!==undefined)value[key]=result[key];
   try {
     const saved=(await chrome.storage.local.get(PROJECT_SYNC))[PROJECT_SYNC]||{};
     await chrome.storage.local.set({[PROJECT_SYNC]:{...saved,[projectId]:value}});
@@ -302,7 +334,7 @@ async function syncProject(lib,projectId,expected,batchId) {
     if(result.bound!==true||result.batchId!==payload.batch.batchId||typeof result.revision!=='string'||!Array.isArray(result.items))throw Error('项目同步回执无效，浏览器批注已保留');
     if(!current||payload.batch.batchId===lib.activeBatchId)current=result;
   }
-  await projectSyncState(projectId,'synced','浏览器批注已同步到本地项目',current);
+  await projectSyncState(projectId,'synced','浏览器批注已同步到本地项目',{...current,batchSnapshotHash:await sha256Text(expected)});
   return {...current,binding:info.binding};
 }
 async function autoSyncProjects(lib,projectIds,expected) {
