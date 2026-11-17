@@ -92,13 +92,24 @@ async function reviewDecision(data, write) {
     if (await snapshot() !== data.expected) throw conflict();
     state.records[key] = [...events,event];
     await chrome.storage.local.set({[REVIEW_DECISIONS]:state});
-    return {event,stale:false,count:events.length+1,sourceHash};
+    return {event,stale:false,count:events.length+1,sourceHash,
+      nativeWitness:nativeLink ? 'current' : 'unlinked'};
   }
-  return {event:previous,stale:!!previous && (
+  const stale=!!previous && (
     previous.sourceSnapshotHash !== sourceSnapshotHash ||
     previous.sourceHash !== sourceHash ||
     JSON.stringify(previous.evidenceHashes) !== JSON.stringify(evidenceHashes)
-  ),count:events.length,sourceHash};
+  );
+  // A stored version witness describes the past. Recheck the current Native
+  // HEAD before displaying it as current; absence or failure never grants trust.
+  let nativeWitness='unlinked';
+  if (!stale && previous?.nativeBatchRevision && previous?.nativeItemRevision) {
+    const nativeLink=await reviewNativeLink(batch,data.expected,item.id);
+    nativeWitness=nativeLink?.batchRevision===previous.nativeBatchRevision &&
+      nativeLink?.itemRevision===previous.nativeItemRevision ? 'current' : 'unverified';
+  }
+  if (await snapshot() !== data.expected) throw conflict();
+  return {event:previous,stale,count:events.length,sourceHash,nativeWitness};
 }
 let queue = Promise.resolve(), lastCapture = 0;
 const serial = fn => { const result = queue.then(fn); queue = result.catch(() => {}); return result; };

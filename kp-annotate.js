@@ -205,7 +205,8 @@
       label.textContent = message || (reviewLoading ? '正在读取本机决定…' : !reviewStatus ? '本机历史暂不可用' :
         !event ? '尚未作出决定；原批注保持不变。' :
         (reviewStatus.stale ? '原批注版本发生变化，旧决定已过期，请重新确认。' :
-        ({adopt:'已采纳草稿',reject:'已拒绝草稿',reconfirm:'已重新确认',withdraw:'已撤回采纳'}[event.action])) + ' · 非 AI 执行授权' + (event.nativeItemRevision ? ' · 记录时已核对 Native 条目版本' : ' · 尚未关联 Native 条目版本'));
+        ({adopt:'已采纳草稿',reject:'已拒绝草稿',reconfirm:'已重新确认',withdraw:'已撤回采纳'}[event.action])) + ' · 非 AI 执行授权' + (reviewStatus.nativeWitness === 'current' ? ' · 当前 Native 条目版本复核一致' :
+        event.nativeItemRevision ? ' · 仅保留记录时版本；当前未复核' : ' · 尚未关联 Native 条目版本'));
       for (const action of ['adopt','reject','reconfirm','withdraw']) {
         const button = panel.querySelector('[data-action=review-' + action + ']');
         button.hidden = !reviewStatus || (event ?

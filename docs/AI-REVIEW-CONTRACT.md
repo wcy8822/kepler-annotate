@@ -68,6 +68,12 @@ Native `project-sync` 与历史快照读取现调用 B1 Python 来源规范化�
 
 本地同步回执不能单独认证用户操作；即使现场校验了 Native item revision，也**只说明关联了该时刻的项目条目版本**，不能证明用户批准、来源合法转换或事件不可篡改。`sourceBindingValidation:false`、`reviewExecution:false`、`SOURCE_VALIDATION_PENDING`、`executable:false` 与 v2 send 禁用保持不变。
 
+### B3d-1f Native 版本见证的读取时状态（2026-11-17）
+
+浏览器本地 `review-decision-status` 在最新事件具有历史 `nativeBatchRevision` / `nativeItemRevision` 且原来源仍一致时，重新用只读 `project-read` 对照当前 Native 批次和条目版本；仅完全一致返回 `nativeWitness: "current"`，否则返回 `"unverified"`。从未记录版本的事件或空历史返回 `"unlinked"`。写入本机决定时返回当次是否关联的相同只读状态，字段只用于界面提示，不回写任何审计事件、不写入 v1/ZIP、v2 `approvedSnapshot`，不表示用户授权。版本过期仍由独立 `stale` 字段优先报告。
+
+这是**可撤销的当前读时状态**而非永久认证：Native 离线和 HEAD 改动都会令当前状态无法验证；不信任历史中自称的批准，保留 `SOURCE_VALIDATION_PENDING` / `executable:false` 与 v2 send 禁用。
+
 ## 版本与能力
 
 `info.capabilities` 声明 `taskContracts: [1, 2]`、`reviewTaskValidation: "structure_and_evidence"`、`sourceBindingValidation: false`、`reviewExecution: false`。这表示主机能保留并校验格式和图片关联，不表示能够验证批准来源，更不表示已内置模型。

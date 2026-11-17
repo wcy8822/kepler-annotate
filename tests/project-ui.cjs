@@ -44,6 +44,7 @@ async function save(page,text){const ui=page.locator('#kp-annotate-host');await 
   await ui.locator('.ka-review-state').filter({hasText:'已重新确认'}).waitFor();
   await ui.locator('[data-action=review-withdraw]').click();
   await ui.locator('.ka-review-state').filter({hasText:'已撤回采纳'}).waitFor();
+  await ui.locator('.ka-review-state').filter({hasText:'当前 Native 条目版本复核一致'}).waitFor();
   const audit=await worker.evaluate(async()=>((await chrome.storage.local.get('kp-annotate-review-decisions-v1'))['kp-annotate-review-decisions-v1']));
   const records=Object.values(audit.records)[0];
   assert.equal(records.length,3);
@@ -78,17 +79,22 @@ async function save(page,text){const ui=page.locator('#kp-annotate-host');await 
   const bindingCheck=await worker.evaluate(async()=>{
     const raw=await snapshot(), batch=JSON.parse(raw);
     const linked=await reviewNativeLink(batch,raw,1);
+    const current=await reviewDecision({expected:raw,itemId:1},false);
     globalThis.nativeDifferentRevision=true;
     const mismatched=await reviewNativeLink(batch,raw,1);
+    const changed=await reviewDecision({expected:raw,itemId:1},false);
     globalThis.nativeDifferentRevision=false;
     globalThis.projectFail=true;
     const offline=await reviewNativeLink(batch,raw,1);
+    const unavailable=await reviewDecision({expected:raw,itemId:1},false);
     globalThis.projectFail=false;
-    return {linked,mismatched,offline};
+    return {linked,mismatched,offline,witnesses:[current.nativeWitness,changed.nativeWitness,unavailable.nativeWitness]};
   });
   assert.equal(bindingCheck.linked?.itemRevision,'a'.repeat(64));
   assert.equal(bindingCheck.mismatched,null,'Native HEAD 变化后不能复用上次同步的版本回执');
   assert.equal(bindingCheck.offline,null,'Native 断连不得伪造条目版本');
+  assert.deepEqual(bindingCheck.witnesses,['current','unverified','unverified'],
+    '读回决定时须重新核对 Native；HEAD 变化和离线均不得标记当前已验证');
   assert.equal(tamper.normal,false,'原图片与来源摘要一致');
   assert.equal(tamper.changed,true,'图片内容变化但批注 JSON 不变时旧决定必须失效');
   assert.equal(tamper.rejected,'KP_REVIEW_SOURCE_CONFLICT','界面读取后图片被替换，旧来源令牌不得写入新决定');
@@ -98,6 +104,11 @@ async function save(page,text){const ui=page.locator('#kp-annotate-host');await 
   assert.equal(saved.annotations[0].text,'请将标题改为新文案');
   assert.equal(saved.approvedSnapshot,undefined);
   assert.equal(saved.annotations[0].approvedReview,undefined);
+  await worker.evaluate(()=>{nativeDifferentRevision=true;});
+  await ui.locator('[data-action=cancel]').click();
+  await ui.locator('[data-edit="1"]').click();
+  await ui.locator('.ka-review-state').filter({hasText:'仅保留记录时版本；当前未复核'}).waitFor();
+  await worker.evaluate(()=>{nativeDifferentRevision=false;});
   await ui.locator('[data-action=cancel]').click();
  });
  await check('非可信 DOM 点击和表单提交不能保存或修改原批注',async()=>{

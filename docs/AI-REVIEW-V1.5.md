@@ -4,6 +4,12 @@
 
 源码与进度统一保存在本仓库。代码、协议、测试与文档可以通过开发分支和 PR 持续推进；扩展运行、真实网页截图和 Native Messaging 实机连接属于单独的验收环节。
 
+## B3d-1f 原编辑器读取时重新核对 Native 版本见证（2026-11-17）
+
+原编辑器现在区分“记录决定时曾核对 Native 版本”与“此刻仍与 Native HEAD 相符”。读取独立本地决定历史时，若最新事件带有 `nativeBatchRevision` 和 `nativeItemRevision`，扩展只读调用既有 `project-read`，重新核对当前浏览器批次、Native 绑定目录、项目与批次、HEAD 和精确条目 revision；全部一致才返回 `nativeWitness: current`。HEAD 变化、原同步回执失效或主机断连时返回 `unverified`，从未绑定则为 `unlinked`；原始来源/图片已变化时优先提示决定过期。状态仅用于界面提示，**不会更新或补签历史决定**，也不会被当作批准凭证。
+
+新增合成 Chromium 回归：首次记录时正常关联、后续 Native HEAD 变化及断连均不再显示“当前已复核”，并验证重新打开原编辑器的提示。此检查不认证用户身份，不完成 H0→H1 的授权转换；`SOURCE_VALIDATION_PENDING`、`executable:false` 和 v2 send 禁用保持不变。真实设备 Chrome / Native Messaging 仍待验收。
+
 ## B3d-1e 本地决定的 Native 精确条目版本见证（2026-11-16）
 
 仅在**当前批次已经成功同步到本地 Native 项目**时，扩展保存同步回执对应的原始批次 SHA-256。用户在原编辑器做出人工决定时，后台以只读 `project-read` 再次检查项目、批次、本地绑定目录、Native HEAD、条目集合以及每个 64 位 `item.revision`，并确保浏览器批次与此前同步时完全相同。全部匹配时才将 `nativeBatchRevision` / `nativeItemRevision` 记入独立的本机决定事件；Native HEAD 变化、扩展来源变化、回执无效、旧版回执、断连或未绑定时记为 null，不冒充精确版本。原始批注、图片、历史 v1 hash、ZIP 和原有 Native v1 任务都不受影响。
