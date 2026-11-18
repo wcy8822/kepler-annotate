@@ -29,6 +29,28 @@ async function save(page,text){const ui=page.locator('#kp-annotate-host');await 
  await check('真实绑定同步项目，保存新批注自动同步原话和图片',async()=>{await dialog.locator('input').fill('/tmp/kepler-ui-fixture');await dialog.locator('[data-project=bind]').click();await dialog.wait('已同步');await dialog.locator('[data-project=close]').click();await save(page,'请将标题改为新文案');await assertEventually(()=>worker.evaluate(()=>projectPayloads.some(p=>p.batch.annotations.some(a=>a.text==='请将标题改为新文案'))));const payload=await worker.evaluate(()=>projectPayloads.findLast(p=>p.batch.annotations.length));assert.equal(payload.aiTasks.tasks[0].rawComment,'请将标题改为新文案');assert.match(payload.assets[payload.batch.annotations[0].shot],/^data:image\/png;base64,/);});
 
 
+ await check('本地建议只读预览不覆盖用户草稿、原话和审计记录',async()=>{
+  await ui.locator('[data-edit="1"]').click();
+  await ui.locator('.ka-review-draft').waitFor({state:'visible'});
+  await ui.locator('.ka-review-state').filter({hasText:'尚未作出决定'}).waitFor();
+  await ui.locator('[data-action=review-local-preview]').evaluate(el=>el.click());
+  assert.equal(await ui.locator('[name=review-proposal]').inputValue(),'','脚本合成点击无效');
+  await ui.locator('[data-action=review-local-preview]').click();
+  await assertEventually(async()=>(await ui.locator('[name=review-proposal]').inputValue()).includes('请将标题改为新文案'));
+  assert.match(await ui.locator('[name=review-proposal]').inputValue(),/不能推断修改目标/);
+  await ui.locator('[name=review-proposal]').fill('用户自己编辑的建议');
+  await ui.locator('[data-action=review-local-preview]').click();
+  assert.equal(await ui.locator('[name=review-proposal]').inputValue(),'用户自己编辑的建议');
+  const saved=await worker.evaluate(async()=>({
+    batch:JSON.parse(await snapshot()),
+    events:(await chrome.storage.local.get('kp-annotate-review-decisions-v1'))['kp-annotate-review-decisions-v1']
+  }));
+  assert.equal(saved.batch.annotations[0].text,'请将标题改为新文案');
+  assert.equal(saved.events,undefined,'只读候选不产生批准事件');
+  assert.equal(saved.batch.approvedSnapshot,undefined);
+  await ui.locator('[data-action=cancel]').click();
+ });
+
  await check('人工决定在原编辑器生成本地历史，拒绝脚本点击且不改 v1 原话',async()=>{
   await ui.locator('[data-edit="1"]').click();
   await ui.locator('.ka-review-draft').waitFor({state:'visible'});

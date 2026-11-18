@@ -201,3 +201,9 @@ aiTasks (schemaVersion: 2)
 
 **边界：** 此格式是由调用方提交的审计声明，不是用户真实点击的可验证证据，也不提供签名。浏览器可信事件来源及撤回操作链尚未实现。所有含评审任务继续 `SOURCE_VALIDATION_PENDING` / `executable:false`，v2 send 不开放；不自动调用模型或外发用户数据。
 
+
+## C2 / D0 只读本地建议预览（2026-11-18）
+
+`review-local-preview` 只对当前已保存批注进行来源只读检查：核对批次快照、由实际截图/参考图 SHA-256 构成的规范化 H1 `sourceHash` 和编辑器读取时的 `expectedSourceHash`。然后由 `review-suggestion.js` 的 `local-template` provider 返回 `{schemaVersion:1,origin:"local-template",readOnly:true,proposal,needsConfirmation,sourceHash}`。这不是 `approvedSnapshot`、`approvedReview` 或 `review-decision-v1`，不会写入任何决定历史或 Native 任务。原始图片只参与本地 H1 校验，不进入草稿正文；不调用模型、Native 或远端网络。
+
+用户明确点击后，仅在草稿框为空且原批注无未保存修改时，将模板放入可编辑草稿。缺失预期只能保留待确认，不能臆造具体产品要求或验收结论；人工文字和过期异步响应不得被模板覆盖。未来真正模型 provider、授权数据范围、端点、费用、请求取消和截图传输必须单独设计与批准。所有含评审任务仍为 `SOURCE_VALIDATION_PENDING` / `executable:false`，v2 send 禁用。

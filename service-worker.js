@@ -1,5 +1,5 @@
 'use strict';
-if (typeof importScripts === 'function') importScripts('kp-annotate-store.js', 'review-source.js');
+if (typeof importScripts === 'function') importScripts('kp-annotate-store.js', 'review-source.js', 'review-suggestion.js');
 const KEY = ['kp', 'annotate', 'batch', 'v1'].join('-');
 const LIBRARY = 'kp-annotate-library-v1';
 const PROJECT_SYNC = 'kp-annotate-project-sync-v1';
@@ -51,6 +51,26 @@ async function reviewNativeLink(batch, raw, itemId) {
     seen.add(item.id);
   }
   return {batchRevision:native.revision, itemRevision:native.items.find(item => item.id === itemId).revision};
+}
+
+// Preview only: no external model, Native call, network, or write to decision history.
+async function reviewLocalPreview(data) {
+  const lib = await ensureLibrary();
+  if (await snapshot() !== data.expected) throw conflict();
+  if (!Number.isSafeInteger(data.itemId) || data.itemId < 1) throw Error('批注编号无效');
+  const batch = lib.batches.find(b => b.batchId === lib.activeBatchId);
+  const item = batch?.annotations.find(a => a.id === data.itemId);
+  if (!item) throw Error('请先保存批注，再整理本地建议');
+  const hashes = await reviewImageHashes(batch.batchId, item);
+  const sourceHash = await globalThis.KPReviewSource.sourceHash(item, hashes);
+  if (sourceHash !== data.expectedSourceHash) {
+    const error = Error('原批注或实际图片已变化，请重新读取后再整理');
+    error.code = 'KP_REVIEW_SOURCE_CONFLICT';
+    throw error;
+  }
+  const candidate = globalThis.KPReviewSuggestion.fromSavedAnnotation(item);
+  if (await snapshot() !== data.expected) throw conflict();
+  return {...candidate, sourceHash};
 }
 
 async function reviewDecision(data, write) {
@@ -387,6 +407,7 @@ async function handle(message, sender) {
     case 'commit': return serial(() => commit(message));
     case 'getAsset': return serial(()=>getBatchAsset(message.batchId,message.key));
     case 'prune': return serial(()=>pruneBatchAssets(message));
+    case 'review-local-preview': return serial(()=>reviewLocalPreview(message));
     case 'review-decision-status': return serial(()=>reviewDecision(message,false));
     case 'review-decision-record': return serial(()=>reviewDecision(message,true));
     case 'codex-info': return serial(()=>codexInfo(message));
