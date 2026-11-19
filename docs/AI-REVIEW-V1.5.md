@@ -10,6 +10,8 @@
 
 为后续 D1 Native 只读请求预备了可注入的 `createAdapter(id, invoke)`：支持 AbortSignal 取消、1–60000ms 上限超时、晚到回复丢弃，当前仅使用合成测试替身验证；**这不代表 UI 已接入取消按钮或真实模型**。预览不再占用其他批注操作的存储串行队列，异步结果回来后后台再次核对批次和实际图片字节 H1 来源，避免等待期间旧图/旧批次候选被返回。仍不写入人工决定、Native v2 任务，也不修改原话或图片。新增 7 项 Node 合成单元测试，既有 Chromium 编辑器集成回归继续由 CI 执行。
 
+首个提交 `017b4b2` 的真实 PR/Push CI 在 Python 原位安装隔离测试失败：新增 `review-provider.js` 已加入运行白名单，但合成安装测试的模拟源码清单遗漏该文件，导致测试始终提前报缺文件，未执行后续安装/回滚断言。现已补齐 `tests/update-installed.test.py` 的测试夹具清单，不削弱源码必需文件校验，需以修复提交准确 SHA 的 CI 重新判断。
+
 **边界**：下一阶段如要注册真实 provider，必须另行实现 Native 独立 request/status/cancel、端点能力及费用控制、具体发送数据预览和逐次授权；不能用测试替身或本地接口冒充模型。真实设备 Chrome/Native 尚未验收。所有评审继续 `SOURCE_VALIDATION_PENDING` / `executable:false`，v2 send 禁用；PR 保持 Draft，不合并/发布。
 
 ## C2 / D0 只读本地建议草稿入口（2026-11-18）
