@@ -1,5 +1,5 @@
 'use strict';
-if (typeof importScripts === 'function') importScripts('kp-annotate-store.js', 'review-source.js', 'review-suggestion.js');
+if (typeof importScripts === 'function') importScripts('kp-annotate-store.js', 'review-source.js', 'review-suggestion.js', 'review-provider.js');
 const KEY = ['kp', 'annotate', 'batch', 'v1'].join('-');
 const LIBRARY = 'kp-annotate-library-v1';
 const PROJECT_SYNC = 'kp-annotate-project-sync-v1';
@@ -68,9 +68,18 @@ async function reviewLocalPreview(data) {
     error.code = 'KP_REVIEW_SOURCE_CONFLICT';
     throw error;
   }
-  const candidate = globalThis.KPReviewSuggestion.fromSavedAnnotation(item);
+  const candidate = await globalThis.KPReviewProvider.requestLocal({annotation:item,sourceHash});
+  // The preview runs outside the storage queue. Verify both batch and actual
+  // image bytes again after any asynchronous provider response.
   if (await snapshot() !== data.expected) throw conflict();
-  return {...candidate, sourceHash};
+  const currentHashes = await reviewImageHashes(batch.batchId, item);
+  if (await globalThis.KPReviewSource.sourceHash(item, currentHashes) !== sourceHash) {
+    const error = Error('建议等待期间实际图片已变化，请重新打开批注');
+    error.code = 'KP_REVIEW_SOURCE_CONFLICT';
+    throw error;
+  }
+  if (await snapshot() !== data.expected) throw conflict();
+  return candidate;
 }
 
 async function reviewDecision(data, write) {
@@ -407,7 +416,7 @@ async function handle(message, sender) {
     case 'commit': return serial(() => commit(message));
     case 'getAsset': return serial(()=>getBatchAsset(message.batchId,message.key));
     case 'prune': return serial(()=>pruneBatchAssets(message));
-    case 'review-local-preview': return serial(()=>reviewLocalPreview(message));
+    case 'review-local-preview': return reviewLocalPreview(message);
     case 'review-decision-status': return serial(()=>reviewDecision(message,false));
     case 'review-decision-record': return serial(()=>reviewDecision(message,true));
     case 'codex-info': return serial(()=>codexInfo(message));

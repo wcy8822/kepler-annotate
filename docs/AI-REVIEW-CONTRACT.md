@@ -207,3 +207,9 @@ aiTasks (schemaVersion: 2)
 `review-local-preview` 只对当前已保存批注进行来源只读检查：核对批次快照、由实际截图/参考图 SHA-256 构成的规范化 H1 `sourceHash` 和编辑器读取时的 `expectedSourceHash`。然后由 `review-suggestion.js` 的 `local-template` provider 返回 `{schemaVersion:1,origin:"local-template",readOnly:true,proposal,needsConfirmation,sourceHash}`。这不是 `approvedSnapshot`、`approvedReview` 或 `review-decision-v1`，不会写入任何决定历史或 Native 任务。原始图片只参与本地 H1 校验，不进入草稿正文；不调用模型、Native 或远端网络。
 
 用户明确点击后，仅在草稿框为空且原批注无未保存修改时，将模板放入可编辑草稿。缺失预期只能保留待确认，不能臆造具体产品要求或验收结论；人工文字和过期异步响应不得被模板覆盖。未来真正模型 provider、授权数据范围、端点、费用、请求取消和截图传输必须单独设计与批准。所有含评审任务仍为 `SOURCE_VALIDATION_PENDING` / `executable:false`，v2 send 禁用。
+
+## D1a 只读建议 Provider 运行契约（2026-11-19）
+
+扩展后台使用 `review-provider.js` 校验 provider 输入/输出。输入仅限已保存批注的四个文本字段 `text/observed/expected/reproduction`，逐项不超过 4000 字符；`sourceHash` 必须为经过本地实际图片校验的 H1 SHA-256，但不作为 provider 能够修改的字段。响应必须**恰好**含 `schemaVersion:1, origin, readOnly:true, proposal, needsConfirmation`，其中来源须等于适配器 ID，建议正文 1–3000 字，未知字段与工具调用字段一律拒绝。后台附加只读 `sourceHash` 并在返回前重新校验实际图片和批次快照。现有 UI 继续只使用 `local-template`；通过测试注入的 provider 不是已获授权的真实模型。
+
+可替换的本机异步调用包装支持取消和超时，超时/取消均失败关闭且不写入批注、建议历史或任务；不承诺无法取消的第三方底层计算已停止，只保证拒绝迟到结果。该模块没有网络请求、凭据、常驻 Agent 或 Native review 实现。新增单元测试覆盖输入最小化、伪造能力、超时、取消、迟到回复及错误；合成浏览器旧流程由现有 Playwright 测试覆盖。完整模型发送权限和截图预览同意仍是独立的后续阶段，`SOURCE_VALIDATION_PENDING` / `executable:false`、v2 send 禁用不变。

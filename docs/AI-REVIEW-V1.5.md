@@ -4,6 +4,14 @@
 
 源码与进度统一保存在本仓库。代码、协议、测试与文档可以通过开发分支和 PR 持续推进；扩展运行、真实网页截图和 Native Messaging 实机连接属于单独的验收环节。
 
+## D1a 只读 Provider 边界与异步竞态隔离（2026-11-19）
+
+本轮新增 `review-provider.js` 作为可替换的**只读适配器契约**。原编辑器现有“根据已保存批注整理草稿”仍使用唯一已注册的 `local-template`，调用链改为 `review-local-preview → KPReviewProvider.requestLocal → review-suggestion.js`；**没有接入真实模型或 Native review 网络通道**。适配器只向 provider 提供已保存的 `text/observed/expected/reproduction` 四个文本字段，不传 URL、DOM、截图字节、图片路径、凭据或工具执行权限；严格拒绝未知输出字段、`toolCalls`、非只读/伪来源响应，要求返回精确 `sourceHash` 供编辑器核对。
+
+为后续 D1 Native 只读请求预备了可注入的 `createAdapter(id, invoke)`：支持 AbortSignal 取消、1–60000ms 上限超时、晚到回复丢弃，当前仅使用合成测试替身验证；**这不代表 UI 已接入取消按钮或真实模型**。预览不再占用其他批注操作的存储串行队列，异步结果回来后后台再次核对批次和实际图片字节 H1 来源，避免等待期间旧图/旧批次候选被返回。仍不写入人工决定、Native v2 任务，也不修改原话或图片。新增 7 项 Node 合成单元测试，既有 Chromium 编辑器集成回归继续由 CI 执行。
+
+**边界**：下一阶段如要注册真实 provider，必须另行实现 Native 独立 request/status/cancel、端点能力及费用控制、具体发送数据预览和逐次授权；不能用测试替身或本地接口冒充模型。真实设备 Chrome/Native 尚未验收。所有评审继续 `SOURCE_VALIDATION_PENDING` / `executable:false`，v2 send 禁用；PR 保持 Draft，不合并/发布。
+
 ## C2 / D0 只读本地建议草稿入口（2026-11-18）
 
 原编辑器的已保存批注现在可以显式点击“根据已保存批注整理草稿（本地）”，由扩展后台 `review-local-preview` 调用 `review-suggestion.js` 本地只读模板适配器。内容仅引用用户填写的原话、观察、预期和复现，不伪造页面事实或开发验收；缺少预期时只能提示“待确认”。用户可编辑、采纳或拒绝草稿；**整理本身不会记录采纳事件**，不会自动改变任何 v1 批注或 Native 任务。
