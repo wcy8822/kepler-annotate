@@ -2,6 +2,12 @@
 
 本页描述 V1.5 阶段 A 的实际代码边界。原始 `annotations.json` 继续使用 `schemaVersion: 1`；当前浏览器和 ZIP 生成器继续输出原 v1 任务。v2 是新增的项目同步格式，尚未开放评审任务开发执行。
 
+## D1b-0 只读建议请求取消（2026-11-20）
+
+原编辑器 `review-local-preview` 携带一次性随机 UUID `requestId`。扩展后台使用 Chrome 的 tab/document 发送方信息绑定 AbortController，`review-local-preview-cancel` 只取消相同发送方和请求 ID 的活动预览，不信任请求正文传入的身份字段；同一文档新请求撤销旧请求。取消或关闭原编辑器时 UI 世代号使迟到结果无效，Provider 的 signal 接受真实中断。取消不建立任何 `approvedSnapshot`、Native 任务或人工决定事件，不撤销已保存的用户决定。
+
+当前仅本地模板，没有真正 Native 任务，也不等同可信用户批准。五类分类、v1 原话/原编号、原图片、历史 hash、精确 item revision、`SOURCE_VALIDATION_PENDING` / `executable:false` 和 v2 send 门禁不变。
+
 ## B1 原始来源摘要（仅纯函数，未启用）
 
 `review-source.js` 与 `review_source.py` 新增 `sourceRecord / sourceJSON / sourceHash` 与 `source_record / source_json / source_hash`。两端输入为**单条原始批注和实际图片字节计算所得的哈希表**，不读取用户数据或调用模型；返回 UTF-8 紧凑 JSON 与 SHA-256。独立合成黄金向量位于 `tests/fixtures/review-source-v1.json`，覆盖图片、非 ASCII 文件名及无图片情况。其字段顺序固定为 `schemaVersion, id, text, category, observed, expected, reproduction, shot, refs, images`；images 按路径 UTF-8 字节升序排序，每项按 `path, sha256` 顺序存储。未填 text 映射空字符串，未填分类/文本细项映射 null，未填 refs 映射空列表；其他非来源运行字段不进入摘要。

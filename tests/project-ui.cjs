@@ -51,6 +51,47 @@ async function save(page,text){const ui=page.locator('#kp-annotate-host');await 
   await ui.locator('[data-action=cancel]').click();
  });
 
+
+ await check('本地建议整理可显式取消，迟到 Provider 结果不覆盖草稿',async()=>{
+   await ui.locator('[data-edit="1"]').click();
+   await ui.locator('.ka-review-state').filter({hasText:'尚未作出决定'}).waitFor();
+   await worker.evaluate(()=>{
+     globalThis.__reviewOriginalProvider = globalThis.KPReviewProvider;
+     globalThis.__reviewPreviewHold = {started:false,aborted:false,finish:null};
+     const adapter = __reviewOriginalProvider.createAdapter('local-template', (_, {signal}) => new Promise(resolve=>{
+       __reviewPreviewHold.started = true;
+       signal.addEventListener('abort',()=>{__reviewPreviewHold.aborted=true;},{once:true});
+       __reviewPreviewHold.finish = () => resolve({
+         schemaVersion:1,origin:'local-template',readOnly:true,
+         proposal:'取消后不应出现的迟到建议',needsConfirmation:false
+       });
+     }));
+     globalThis.KPReviewProvider = {...__reviewOriginalProvider,requestLocal:adapter.request};
+   });
+   try {
+     await ui.locator('[data-action=review-local-preview]').click();
+     await assertEventually(()=>worker.evaluate(()=>globalThis.__reviewPreviewHold.started));
+     await ui.locator('[data-action=review-preview-cancel]').evaluate(button=>button.click());
+     assert.equal(await worker.evaluate(()=>globalThis.__reviewPreviewHold.aborted),false,'合成点击不能取消');
+     await ui.locator('[data-action=review-preview-cancel]').click();
+     await assertEventually(()=>worker.evaluate(()=>globalThis.__reviewPreviewHold.aborted));
+     await ui.locator('.ka-review-state').filter({hasText:'已停止整理'}).waitFor();
+     await assertEventually(()=>worker.evaluate(()=>reviewPreviewRequests.size===0));
+     await worker.evaluate(()=>globalThis.__reviewPreviewHold.finish());
+     assert.equal(await ui.locator('[name=review-proposal]').inputValue(),'');
+     assert.equal(await worker.evaluate(async()=>
+       (await chrome.storage.local.get('kp-annotate-review-decisions-v1'))['kp-annotate-review-decisions-v1']),undefined,
+       '取消整理不能留下批准事件');
+   } finally {
+     await worker.evaluate(()=>{
+       globalThis.__reviewPreviewHold?.finish?.();
+       globalThis.KPReviewProvider=globalThis.__reviewOriginalProvider;
+       delete globalThis.__reviewPreviewHold;delete globalThis.__reviewOriginalProvider;
+     });
+     if(await ui.locator('.ka-editor').isVisible())await ui.locator('[data-action=cancel]').click();
+   }
+ });
+
  await check('人工决定在原编辑器生成本地历史，拒绝脚本点击且不改 v1 原话',async()=>{
   await ui.locator('[data-edit="1"]').click();
   await ui.locator('.ka-review-draft').waitFor({state:'visible'});

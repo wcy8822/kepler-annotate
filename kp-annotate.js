@@ -26,7 +26,7 @@
         <h2>写批注</h2><p class="ka-target"></p><label>类别<select name="category"><option>视觉</option><option>文案</option><option>交互</option><option>产品逻辑</option><option>反馈/建议</option></select></label><label>处理状态<select name="status"><option>未处理</option><option>处理中</option><option>待验收</option><option>已完成</option></select></label>
         <label>一句话说明<textarea name="text" rows="4" required maxlength="4000" placeholder="希望改成什么样？"></textarea></label>
         <section class="ka-category-suggestion" hidden aria-label="本地类别建议"><strong></strong><p class="ka-category-reason"></p><div><button type="button" data-action="adopt-category">采用此类别</button><button type="button" data-action="dismiss-category">仅保留当前分类</button></div></section>
-        <section class="ka-review-draft" hidden aria-label="建议草稿与人工决定"><h3>建议草稿 · 仅存本机</h3><p>尚未接入模型。建议可编辑；采纳、拒绝或撤回只记入本地历史，不修改原话、不授权 AI 开发执行。</p><label>待评审建议<textarea name="review-proposal" rows="3" maxlength="3000" placeholder="在此填写或编辑候选建议"></textarea></label><button type="button" data-action="review-local-preview">根据已保存批注整理草稿（本地）</button><small>仅引用已保存的原话、观察、预期和复现；不发送网页或图片，不调用模型，不覆盖人工草稿。</small><p class="ka-review-state" role="status"></p><div class="ka-review-actions"><button type="button" data-action="review-adopt" hidden>采纳草稿</button><button type="button" data-action="review-reject" hidden>拒绝草稿，仅保留原话</button><button type="button" data-action="review-reconfirm" hidden>重新确认</button><button type="button" data-action="review-withdraw" hidden>撤回采纳</button></div></section>
+        <section class="ka-review-draft" hidden aria-label="建议草稿与人工决定"><h3>建议草稿 · 仅存本机</h3><p>尚未接入模型。建议可编辑；采纳、拒绝或撤回只记入本地历史，不修改原话、不授权 AI 开发执行。</p><label>待评审建议<textarea name="review-proposal" rows="3" maxlength="3000" placeholder="在此填写或编辑候选建议"></textarea></label><button type="button" data-action="review-local-preview">根据已保存批注整理草稿（本地）</button><button type="button" data-action="review-preview-cancel" hidden>停止整理</button><small>仅引用已保存的原话、观察、预期和复现；不发送网页或图片，不调用模型，不覆盖人工草稿。</small><p class="ka-review-state" role="status"></p><div class="ka-review-actions"><button type="button" data-action="review-adopt" hidden>采纳草稿</button><button type="button" data-action="review-reject" hidden>拒绝草稿，仅保留原话</button><button type="button" data-action="review-reconfirm" hidden>重新确认</button><button type="button" data-action="review-withdraw" hidden>撤回采纳</button></div></section>
         <details><summary>补充观察、预期与复现（选填）</summary><label>实际看到什么<textarea name="observed" rows="2" maxlength="4000"></textarea></label><label>希望怎样<textarea name="expected" rows="2" maxlength="4000"></textarea></label><label>如何复现<textarea name="reproduction" rows="2" maxlength="4000"></textarea></label></details><label>参考图 · Ctrl+V / ⌘V 粘贴，或选择图片<input type="file" name="reference" accept="image/*" multiple></label><div class="ka-refs"></div>
         <p class="ka-editor-status" role="status"></p><footer><button type="button" data-action="cancel">取消</button><button type="button" data-action="save">保存批注</button></footer>
       </form></dialog><dialog class="ka-manager" aria-label="批次管理"><form><h2></h2><p class="ka-management-hint"></p><label>名称<input name="management-name" maxlength="80" required></label><p role="status"></p><footer><button type="button" data-action="manage-cancel">取消</button><button type="submit">确定</button></footer></form></dialog><div class="ka-status" role="status" data-html2canvas-ignore="true"></div>`;
@@ -40,7 +40,7 @@
     const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     let noticeTimer, freezeTimer, frozen = null, categoryFilter = '', statusFilter = '', selected = new Set(), managementAction = null, managementSnapshot = null;
     let categorySuggestion = null, dismissedSuggestionKey = null;
-    let reviewStatus = null, reviewLoading = false, reviewGeneration = 0;
+    let reviewStatus = null, reviewLoading = false, reviewGeneration = 0, activeReviewPreview = null;
     let projectUI;
     let codexSnapshot = null, codexTarget = '', codexTargetEdited = false, codexSubmitter = null, codexRequest = null;
     const categories = ['视觉','文案','交互','产品逻辑','反馈/建议'], statuses = ['未处理','处理中','待验收','已完成'];
@@ -215,6 +215,9 @@
           !['adopt','reject'].includes(action));
         button.disabled = reviewLoading || busy;
       }
+      const cancel = panel.querySelector('[data-action=review-preview-cancel]');
+      cancel.hidden = !activeReviewPreview;
+      cancel.disabled = !activeReviewPreview || busy;
     }
     async function loadReviewStatus() {
       const generation = ++reviewGeneration;
@@ -243,16 +246,26 @@
         return current !== (saved[field] || (field === 'status' ? '未处理' : ''));
       });
     }
+    function cancelReviewPreview() {
+      if (!activeReviewPreview) return;
+      const requestId = activeReviewPreview;
+      activeReviewPreview = null;
+      ++reviewGeneration;
+      reviewLoading = false;
+      showReviewStatus('已停止整理；原批注和已有建议草稿未改变。');
+      store.rpc('review-local-preview-cancel', {requestId}).catch(() => {});
+    }
     async function prepareLocalReviewPreview() {
       if (reviewLoading || busy || !reviewStatus || !draft?.existing || !editor.open) return;
       if (reviewAnnotationEdited()) throw Error('原批注有未保存的修改，请先保存并重新打开');
       const field = $('[name=review-proposal]');
       if (field.value.trim()) { showReviewStatus('已有建议草稿，未覆盖；如需重新整理，请先自行清空草稿。'); return; }
-      const id = draft.id, batchId = draft.batchId, generation = ++reviewGeneration;
+      const id = draft.id, batchId = draft.batchId, generation = ++reviewGeneration, requestId = crypto.randomUUID();
+      activeReviewPreview = requestId;
       reviewLoading = true; showReviewStatus('正在本地整理已保存批注…');
       let message = '';
       try {
-        const result = await store.rpc('review-local-preview', {expected:storedSnapshot,itemId:id,expectedSourceHash:reviewStatus.sourceHash});
+        const result = await store.rpc('review-local-preview', {expected:storedSnapshot,itemId:id,expectedSourceHash:reviewStatus.sourceHash,requestId});
         if (generation !== reviewGeneration || !editor.open || !draft || draft.id !== id || draft.batchId !== batchId || field.value !== '') return;
         if (result.origin !== 'local-template' || result.readOnly !== true || typeof result.proposal !== 'string') throw Error('本地建议响应格式无效');
         field.value = result.proposal;
@@ -262,6 +275,7 @@
       } catch (error) {
         message = '本地整理失败：' + error.message;
       } finally {
+        if (activeReviewPreview === requestId) activeReviewPreview = null;
         if (generation === reviewGeneration) { reviewLoading = false; showReviewStatus(message); }
       }
     }
@@ -281,6 +295,7 @@
     }
     function openDraft(item, existing=false) {
       if (busy) return;
+      cancelReviewPreview();
       draft = {...item, batchId:batch.batchId, existing, pendingRefs:[], removedRefs:[]};
       $('.ka-target').textContent = existing ? `编辑 #${item.id} · ${item.elements.map(e=>e.text).join(' → ')}` : item.mode==='reference' ? '改成像这个：'+item.elements.map(e=>e.text).join(' → ') : `#${item.id} · ${item.elements.map(e=>e.text).join(' / ') || '手绘区域'}`;
       for(const field of ['observed','expected','reproduction'])$('[name='+field+']').value=item[field]||''; $('[name=status]').value=item.status||'未处理';
@@ -450,12 +465,13 @@
         renderCategorySuggestion(); return;
       }
       if (type === 'review-local-preview') { await prepareLocalReviewPreview(); return; }
+      if (type === 'review-preview-cancel') { cancelReviewPreview(); return; }
       if (['review-adopt','review-reject','review-reconfirm','review-withdraw'].includes(type)) { await recordReviewAction(type.slice(7)); return; }
       if(type==='list')toggleList();
       if(type==='freeze-delay')delayedFreeze();
       if(type==='unfreeze')setMode('browse');
       if(type==='close')toggle(false);
-      if(type==='cancel'&&!busy){draft=null;editor.close();refreshBatch();setMode('browse');renderList();}
+      if(type==='cancel'&&!busy){cancelReviewPreview();draft=null;editor.close();refreshBatch();setMode('browse');renderList();}
       if(type==='retry')await retryDraft();
       if(type==='return-draft'&&!busy&&draft){const url=new URL(draft.url);if(url.origin===location.origin&&url.pathname===location.pathname&&url.search===location.search)location.hash=url.hash;else draftError(Error('请将地址栏切回批注原页面的筛选状态后重试，当前草稿继续保留'));}
       if(type==='save')await saveDraft();
@@ -474,7 +490,7 @@
         await locked(()=>commit({...batch,annotations:batch.annotations.map(a=>selected.has(a.id)?{...a,[field]:value,updatedAt:new Date().toISOString()}:a)}));renderList();notice('已更新所选批注');
       }
     }
-    function toggle(value=!enabled) { if(busy||projectUI?.isBusy())return;enabled=value;if(!enabled){draft=null;if(editor.open)editor.close();if($('.ka-codex').open)closeCodex();projectUI?.close();}root.hidden=!enabled;setMode('browse'); }
+    function toggle(value=!enabled) { if(busy||projectUI?.isBusy())return;enabled=value;if(!enabled){cancelReviewPreview();draft=null;if(editor.open)editor.close();if($('.ka-codex').open)closeCodex();projectUI?.close();}root.hidden=!enabled;setMode('browse'); }
     codexInput.addEventListener('input',event=>{
       if(event.isTrusted){codexTarget=codexInput.value;codexTargetEdited=true;}
     });
@@ -529,7 +545,7 @@
     });
     $('[name=reference]').addEventListener('change',event=>addRefs(event.target.files));
     editor.addEventListener('paste',event=>{const files=[...(event.clipboardData?.items || [])].filter(x=>x.kind==='file').map(x=>x.getAsFile()).filter(Boolean);if(files.length){event.preventDefault();addRefs(files);}});
-    editor.addEventListener('cancel',event=>{event.preventDefault();if(!busy){draft=null;editor.close();refreshBatch();setMode('browse');renderList();}});
+    editor.addEventListener('cancel',event=>{event.preventDefault();if(!busy){cancelReviewPreview();draft=null;editor.close();refreshBatch();setMode('browse');renderList();}});
     // Implicit or scripted form submission must never bypass the explicit Save button.
     editor.querySelector('form').addEventListener('submit',event=>event.preventDefault());
     document.addEventListener('keydown',event=>{

@@ -54,7 +54,7 @@ async function reviewNativeLink(batch, raw, itemId) {
 }
 
 // Preview only: no external model, Native call, network, or write to decision history.
-async function reviewLocalPreview(data) {
+async function reviewLocalPreview(data, signal) {
   const lib = await ensureLibrary();
   if (await snapshot() !== data.expected) throw conflict();
   if (!Number.isSafeInteger(data.itemId) || data.itemId < 1) throw Error('批注编号无效');
@@ -68,7 +68,9 @@ async function reviewLocalPreview(data) {
     error.code = 'KP_REVIEW_SOURCE_CONFLICT';
     throw error;
   }
-  const candidate = await globalThis.KPReviewProvider.requestLocal({annotation:item,sourceHash});
+  if (signal.aborted) throw reviewPreviewCancelled();
+  const candidate = await globalThis.KPReviewProvider.requestLocal({annotation:item,sourceHash,signal});
+  if (signal.aborted) throw reviewPreviewCancelled();
   // The preview runs outside the storage queue. Verify both batch and actual
   // image bytes again after any asynchronous provider response.
   if (await snapshot() !== data.expected) throw conflict();
@@ -79,7 +81,44 @@ async function reviewLocalPreview(data) {
     throw error;
   }
   if (await snapshot() !== data.expected) throw conflict();
+  if (signal.aborted) throw reviewPreviewCancelled();
   return candidate;
+}
+
+
+const reviewPreviewRequests = new Map();
+function reviewPreviewCancelled() {
+  const error = Error('建议请求已取消，原始批注未改变');
+  error.code = 'KP_REVIEW_PROVIDER_CANCELLED';
+  return error;
+}
+function reviewPreviewRequestId(data) {
+  if (typeof data?.requestId !== 'string' ||
+      !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(data.requestId))
+    throw Error('建议请求标识无效');
+  return data.requestId;
+}
+function reviewPreviewOwner(sender) {
+  return JSON.stringify([sender.tab.id, sender.documentId || sender.url]);
+}
+async function startReviewPreview(data, sender) {
+  const requestId = reviewPreviewRequestId(data);
+  const owner = reviewPreviewOwner(sender);
+  reviewPreviewRequests.get(owner)?.controller.abort();
+  const ticket = {requestId, controller:new AbortController()};
+  reviewPreviewRequests.set(owner,ticket);
+  try {
+    return await reviewLocalPreview(data,ticket.controller.signal);
+  } finally {
+    if (reviewPreviewRequests.get(owner) === ticket) reviewPreviewRequests.delete(owner);
+  }
+}
+function cancelReviewPreview(data, sender) {
+  const requestId = reviewPreviewRequestId(data);
+  const ticket = reviewPreviewRequests.get(reviewPreviewOwner(sender));
+  if (!ticket || ticket.requestId !== requestId) return {cancelled:false};
+  ticket.controller.abort();
+  return {cancelled:true};
 }
 
 async function reviewDecision(data, write) {
@@ -416,7 +455,8 @@ async function handle(message, sender) {
     case 'commit': return serial(() => commit(message));
     case 'getAsset': return serial(()=>getBatchAsset(message.batchId,message.key));
     case 'prune': return serial(()=>pruneBatchAssets(message));
-    case 'review-local-preview': return reviewLocalPreview(message);
+    case 'review-local-preview': return startReviewPreview(message, sender);
+    case 'review-local-preview-cancel': return cancelReviewPreview(message, sender);
     case 'review-decision-status': return serial(()=>reviewDecision(message,false));
     case 'review-decision-record': return serial(()=>reviewDecision(message,true));
     case 'codex-info': return serial(()=>codexInfo(message));

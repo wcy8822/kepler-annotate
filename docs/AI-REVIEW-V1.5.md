@@ -4,6 +4,12 @@
 
 源码与进度统一保存在本仓库。代码、协议、测试与文档可以通过开发分支和 PR 持续推进；扩展运行、真实网页截图和 Native Messaging 实机连接属于单独的验收环节。
 
+## D1b-0 原编辑器只读建议显式取消（2026-11-20）
+
+D1a 的只读 Provider 已有取消与超时封装，本轮将取消真正接入原编辑器的「停止整理」按钮和扩展后台 `review-local-preview-cancel`。每次请求使用随机 requestId，后台按消息发送方的 tab/document 隔离活动请求，只有同一来源和 ID 可以取消。AbortSignal 传至 Provider；关编辑器、切换批注或手动停止都会放弃等待，丢弃任何晚到候选，不覆盖人工草稿、原始批注和决定历史。新增挂起合成 Provider 的 Chromium 回归验证可信取消、合成点击拒绝、取消信号及迟到结果。
+
+这不是 Native 模型 request/status/cancel：目前仍只有 local-template，没有真实模型、网络调用、截图外发或新权限。未来 Native Messaging 需独立设计跨消息可追踪的任务生命周期，不能假定 sendNativeMessage 启动的进程常驻。用户批准、来源门禁、`SOURCE_VALIDATION_PENDING` / `executable:false`、v2 send 禁用不变，真实 Chrome/Native 用户设备验收待验证；不合并、不发布。
+
 ## D1a 只读 Provider 边界与异步竞态隔离（2026-11-19）
 
 本轮新增 `review-provider.js` 作为可替换的**只读适配器契约**。原编辑器现有“根据已保存批注整理草稿”仍使用唯一已注册的 `local-template`，调用链改为 `review-local-preview → KPReviewProvider.requestLocal → review-suggestion.js`；**没有接入真实模型或 Native review 网络通道**。适配器只向 provider 提供已保存的 `text/observed/expected/reproduction` 四个文本字段，不传 URL、DOM、截图字节、图片路径、凭据或工具执行权限；严格拒绝未知输出字段、`toolCalls`、非只读/伪来源响应，要求返回精确 `sourceHash` 供编辑器核对。
