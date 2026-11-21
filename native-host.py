@@ -11,6 +11,7 @@ import re
 import runpy
 import stat
 import struct
+import time
 import subprocess
 import sys
 import uuid
@@ -445,6 +446,108 @@ def make_prompt(folder, batch):
     return "\n".join(lines)
 
 
+
+# Synthetic-only state machine. sendNativeMessage starts a new host per call, so
+# no request state may rely on module globals or a persistent background process.
+# No original text, images, URL, credentials, or model output are written here.
+PREVIEW_TTL_SECONDS = 3600
+PREVIEW_MAX_REQUESTS = 128
+PREVIEW_UUID = re.compile(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}", re.ASCII)
+PREVIEW_HASH = re.compile(r"[0-9a-f]{64}", re.ASCII)
+
+
+class ReviewPreviewError(ValueError):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+
+def review_preview(host, request):
+    op = request["op"]
+    required = {
+        "review-preview-request": {"op", "requestId", "provider", "synthetic", "sourceHash"},
+        "review-preview-status": {"op", "requestId"},
+        "review-preview-cancel": {"op", "requestId"},
+    }[op]
+    if set(request) != required:
+        raise ReviewPreviewError("REVIEW_PREVIEW_INVALID", "只读建议请求字段无效")
+    request_id = request["requestId"]
+    if not isinstance(request_id, str) or not PREVIEW_UUID.fullmatch(request_id):
+        raise ReviewPreviewError("REVIEW_PREVIEW_INVALID", "requestId 必须为规范小写 UUID")
+    if op == "review-preview-request":
+        if request["provider"] != "synthetic-fixture" or request["synthetic"] is not True:
+            raise ReviewPreviewError("REVIEW_PROVIDER_NOT_CONFIGURED", "仅提供显式合成测试；真实模型尚未配置")
+        value = request["sourceHash"]
+        if not isinstance(value, str) or not PREVIEW_HASH.fullmatch(value):
+            raise ReviewPreviewError("REVIEW_PREVIEW_INVALID", "来源摘要无效")
+
+    secure_dir(host.root)
+    with os.fdopen(private_file(host.root / ".review-preview.lock", os.O_RDWR | os.O_CREAT), "r+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        path = host.root / "review-preview-jobs.json"
+        ledger = load_json(path) if path.exists() or path.is_symlink() else {"schemaVersion": 1, "requests": {}}
+        if (not isinstance(ledger, dict) or set(ledger) != {"schemaVersion", "requests"}
+                or type(ledger["schemaVersion"]) is not int or ledger["schemaVersion"] != 1
+                or not isinstance(ledger["requests"], dict)):
+            raise ReviewPreviewError("REVIEW_PREVIEW_STORAGE_INVALID", "本地建议状态记录无效")
+        now = int(time.time())
+        entries = ledger["requests"]
+        if len(entries) > PREVIEW_MAX_REQUESTS:
+            raise ReviewPreviewError("REVIEW_PREVIEW_STORAGE_INVALID", "本地建议状态条数异常")
+        for key, entry in list(entries.items()):
+            if (not isinstance(key, str) or not PREVIEW_UUID.fullmatch(key)
+                    or not isinstance(entry, dict) or set(entry) != {"sourceHash", "state", "createdAt"}
+                    or not isinstance(entry["sourceHash"], str) or not PREVIEW_HASH.fullmatch(entry["sourceHash"])
+                    or entry["state"] not in ("queued", "completed", "cancelled")
+                    or type(entry["createdAt"]) is not int or entry["createdAt"] < 0):
+                raise ReviewPreviewError("REVIEW_PREVIEW_STORAGE_INVALID", "本地建议状态记录损坏")
+        # Expiry is a bounded, fail-closed cleanup; old request IDs cannot authorize tasks.
+        expired = [key for key, entry in entries.items()
+                   if now - entry["createdAt"] >= PREVIEW_TTL_SECONDS]
+        for key in expired:
+            del entries[key]
+        changed = bool(expired)
+        entry = entries.get(request_id)
+        if op == "review-preview-request":
+            if entry is not None and entry["sourceHash"] != request["sourceHash"]:
+                raise ReviewPreviewError("REVIEW_PREVIEW_CONFLICT", "requestId 不能复用于其他来源")
+            duplicate = entry is not None
+            if entry is None:
+                if len(entries) >= PREVIEW_MAX_REQUESTS:
+                    raise ReviewPreviewError("REVIEW_PREVIEW_LIMIT", "合成建议请求达到本地上限")
+                entry = {"sourceHash": request["sourceHash"], "state": "queued", "createdAt": now}
+                entries[request_id] = entry
+                changed = True
+            response = {"ok": True, "requestId": request_id, "state": entry["state"],
+                        "provider": "synthetic-fixture", "synthetic": True, "duplicate": duplicate}
+        else:
+            if entry is None:
+                raise ReviewPreviewError("REVIEW_PREVIEW_NOT_FOUND", "建议请求不存在或已过期")
+            if op == "review-preview-cancel":
+                cancelled = entry["state"] == "queued"
+                if cancelled:
+                    entry["state"] = "cancelled"
+                    changed = True
+                response = {"ok": True, "requestId": request_id, "state": entry["state"],
+                            "cancelled": cancelled, "synthetic": True}
+            else:
+                # Only the fixture advances on a status call; a real provider will
+                # require a separate worker, endpoint authorization and error recovery.
+                if entry["state"] == "queued":
+                    entry["state"] = "completed"
+                    changed = True
+                response = {"ok": True, "requestId": request_id, "state": entry["state"],
+                            "synthetic": True}
+                if entry["state"] == "completed":
+                    response["candidate"] = {
+                        "schemaVersion": 1, "origin": "native-fixture", "readOnly": True,
+                        "proposal": "【合成测试】未调用模型；此结果不得作为真实评审建议。",
+                        "needsConfirmation": True, "sourceHash": entry["sourceHash"]}
+        if changed:
+            atomic_json(path, ledger)
+        return response
+
+
 class Host:
     def __init__(self, config):
         default_thread = config.get("defaultThread")
@@ -466,7 +569,8 @@ class Host:
             if request.get("op") == "info":
                 return {"ok": True, "defaultThread": self.default_thread, "capabilities": {
                     "taskContracts": [1, 2], "reviewTaskValidation": "structure_and_evidence",
-                    "sourceBindingValidation": False, "reviewExecution": False}}
+                    "sourceBindingValidation": False, "reviewExecution": False,
+                    "reviewPreviewLifecycle": "synthetic_fixture_only"}}
             if request.get("op") in ("project-info", "project-bind", "project-sync", "project-read"):
                 if self.project_store is None:
                     module = runpy.run_path(str(Path(__file__).resolve().with_name("project_store.py")))
@@ -479,6 +583,8 @@ class Host:
                     return self.project_store.sync(request)
                 return self.project_store.read(request.get("projectId"), request.get("batchId"), compact=True,
                                                accept_task_contract=request.get("acceptTaskContract"))
+            if request.get("op") in ("review-preview-request", "review-preview-status", "review-preview-cancel"):
+                return review_preview(self, request)
             if request.get("op") != "send":
                 raise ValueError("op 仅支持 info 或 send")
             if isinstance(request.get("aiTasks"), dict) and request["aiTasks"].get("schemaVersion") == 2:

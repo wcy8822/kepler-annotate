@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 from unittest.mock import patch
 
 sys.dont_write_bytecode = True
@@ -22,7 +23,8 @@ EXTENSION = "abcdefghijklmnopabcdefghijklmnop"
 THREAD = "00000000-0000-4000-8000-000000000001"
 OTHER_THREAD = "00000000-0000-4000-8000-000000000002"
 CAPABILITIES = {"taskContracts": [1, 2], "reviewTaskValidation": "structure_and_evidence",
-                "sourceBindingValidation": False, "reviewExecution": False}
+                "sourceBindingValidation": False, "reviewExecution": False,
+                "reviewPreviewLifecycle": "synthetic_fixture_only"}
 PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jf1sAAAAASUVORK5CYII=")
 DATA = "data:image/png;base64," + base64.b64encode(PNG).decode()
 
@@ -101,6 +103,64 @@ print("queued")
 
     def invoke(self, data):
         return self.host.handle(copy.deepcopy(data))
+
+
+    def test_synthetic_preview_lifecycle_survives_native_process_restart(self):
+        request_id = str(uuid.uuid4())
+        request = {"op": "review-preview-request", "requestId": request_id,
+                   "provider": "synthetic-fixture", "synthetic": True, "sourceHash": "a" * 64}
+        first = self.invoke(request)
+        self.assertEqual((first["state"], first["duplicate"], first["synthetic"]), ("queued", False, True))
+        self.host = self.module.Host(self.config)  # sendNativeMessage launches another process
+        again = self.invoke(request)
+        self.assertEqual((again["state"], again["duplicate"]), ("queued", True))
+        status = self.invoke({"op": "review-preview-status", "requestId": request_id})
+        self.assertEqual(status["state"], "completed")
+        self.assertEqual(status["candidate"]["origin"], "native-fixture")
+        self.assertEqual(status["candidate"]["sourceHash"], "a" * 64)
+        self.assertIn("合成测试", status["candidate"]["proposal"])
+        self.assertEqual(self.invoke({"op": "review-preview-status", "requestId": request_id}), status)
+        self.assertFalse(self.invoke({"op": "review-preview-cancel", "requestId": request_id})["cancelled"])
+        self.assertEqual(self.calls(), [])
+        ledger = self.root / "handoffs" / "review-preview-jobs.json"
+        self.assertEqual(stat.S_IMODE(ledger.stat().st_mode), 0o600)
+        saved = ledger.read_text()
+        self.assertNotIn("proposal", saved)
+        self.assertNotIn("批注", saved)
+
+        other_id = str(uuid.uuid4())
+        other = dict(request, requestId=other_id)
+        self.assertEqual(self.invoke(other)["state"], "queued")
+        cancelled = self.invoke({"op": "review-preview-cancel", "requestId": other_id})
+        self.assertTrue(cancelled["cancelled"])
+        self.assertEqual(self.invoke({"op": "review-preview-status", "requestId": other_id})["state"], "cancelled")
+        self.assertNotIn("candidate", self.invoke({"op": "review-preview-status", "requestId": other_id}))
+
+    def test_synthetic_preview_rejects_real_provider_payload_replay_and_corrupt_store(self):
+        request_id = str(uuid.uuid4())
+        base = {"op": "review-preview-request", "requestId": request_id,
+                "provider": "synthetic-fixture", "synthetic": True, "sourceHash": "b" * 64}
+        for patch_values, expected in [
+            ({"provider": "cloud"}, "REVIEW_PROVIDER_NOT_CONFIGURED"),
+            ({"synthetic": False}, "REVIEW_PROVIDER_NOT_CONFIGURED"),
+            ({"sourceHash": "not-a-hash"}, "REVIEW_PREVIEW_INVALID"),
+            ({"requestId": request_id.upper()}, "REVIEW_PREVIEW_INVALID"),
+            ({"annotation": {"text": "untrusted"}}, "REVIEW_PREVIEW_INVALID"),
+        ]:
+            self.assertEqual(self.invoke(dict(base, **patch_values))["code"], expected)
+        self.assertEqual(self.invoke(base)["state"], "queued")
+        self.assertEqual(self.invoke(dict(base, sourceHash="c" * 64))["code"], "REVIEW_PREVIEW_CONFLICT")
+        self.assertEqual(self.invoke({"op": "review-preview-status", "requestId": str(uuid.uuid4())})["code"],
+                         "REVIEW_PREVIEW_NOT_FOUND")
+        self.assertEqual(self.invoke({"op": "review-preview-cancel", "requestId": request_id, "text": "x"})["code"],
+                         "REVIEW_PREVIEW_INVALID")
+        ledger = self.root / "handoffs" / "review-preview-jobs.json"
+        ledger.write_text('{"schemaVersion":1,"requests":{"invalid":{}}}')
+        self.assertEqual(self.invoke({"op": "review-preview-status", "requestId": request_id})["code"],
+                         "REVIEW_PREVIEW_STORAGE_INVALID")
+        ledger.unlink()
+        ledger.symlink_to(self.root / "fake-codex.jsonl")
+        self.assertFalse(self.invoke({"op": "review-preview-status", "requestId": request_id})["ok"])
 
     def test_info_and_default_thread(self):
         self.assertEqual(self.invoke({"op": "info"}), {"ok": True, "defaultThread": THREAD, "capabilities": CAPABILITIES})

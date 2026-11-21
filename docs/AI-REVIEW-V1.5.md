@@ -1,5 +1,11 @@
 # V1.5 AI 前端评审迭代计划
 
+## D1b-1 Native 合成建议 request/status/cancel 协议（2026-11-21）
+
+新增三个严格限定为合成测试的 Native Messaging 操作：`review-preview-request`、`review-preview-status` 和 `review-preview-cancel`。仅允许显式 `provider: synthetic-fixture`、`synthetic: true`、规范小写 UUID 和当前 H1 `sourceHash`；拒绝原文、URL、截图、凭据等额外输入字段。首次请求产生 queued 状态，第一次 status 在合成模式下产生标记为合成的只读结果；取消 queued 后不会再生成结果，完成后取消不会冒充成功。相同 ID/来源幂等，不同来源复用 ID 拒绝。状态跨 `sendNativeMessage` 短进程保存于本机 dataRoot，经专用锁、私有文件和原子更新保护，最多 128 条、1 小时过期；仅持久化 requestId、sourceHash、state、时间，不保存原始文字或建议正文。
+
+这是**Native 协议和生命周期的隔离测试桩**，而不是模型服务、后台队列、生产 worker 或用户可用的新建议按钮。状态查询在模拟模式里触发完成仅为验证 request/status/cancel 的竞争与恢复路径，不得套用为真实模型完成机制；真实 Provider 仍需独立进程/任务执行、明确端点和费用控制、具体请求授权、可靠重启恢复及 UI 接线。当前唯一实际编辑器建议仍为本地模板，不发送外网/付费模型/截图，不建立人工批准，不修改 v1 数据，v2 仍 `SOURCE_VALIDATION_PENDING` / `executable:false`，send 禁用。真实 Chrome/Native 实机待验收，PR 保持 Draft，不合并、不发布。
+
 目标是在现有批注编辑器内完成“识别类别 → 整理建议 → 用户确认 → 结构化开发任务”。原话、原编号和图片证据始终保留；用户可以编辑建议、拒绝建议或只保存原话。
 
 源码与进度统一保存在本仓库。代码、协议、测试与文档可以通过开发分支和 PR 持续推进；扩展运行、真实网页截图和 Native Messaging 实机连接属于单独的验收环节。
