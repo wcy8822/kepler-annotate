@@ -17,7 +17,8 @@ EXTENSION = "abcdefghijklmnopabcdefghijklmnop"
 THREAD = "00000000-0000-4000-8000-000000000001"
 NO_THREAD_INFO = {"ok": True, "defaultThread": None, "capabilities": {
     "taskContracts": [1, 2], "reviewTaskValidation": "structure_and_evidence",
-    "sourceBindingValidation": False, "reviewExecution": False}}
+    "sourceBindingValidation": False, "reviewExecution": False,
+    "reviewPreviewLifecycle": "synthetic_fixture_only"}}
 
 
 def load(name, path):
