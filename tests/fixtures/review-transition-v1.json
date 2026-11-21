@@ -1,0 +1,146 @@
+{
+  "schemaVersion": 1,
+  "description": "Synthetic source change vectors, not user approval or real screenshots",
+  "vectors": [
+    {
+      "name": "unchanged_draft",
+      "basis": {
+        "id": 3,
+        "text": "请确认布局",
+        "category": null,
+        "refs": [],
+        "createdAt": "noise"
+      },
+      "basisHashes": {},
+      "applies": {
+        "id": 3,
+        "text": "请确认布局",
+        "category": null,
+        "refs": [],
+        "updatedAt": "different noise"
+      },
+      "appliesHashes": {},
+      "transform": {
+        "schemaVersion": 1,
+        "adoptedCategory": null,
+        "addedEvidence": []
+      },
+      "basisSourceHash": "175d176a56e393f0bbbe543d9877e911ecb7036b9f95bec9a068e3f38f8af504",
+      "appliesToSourceHash": "175d176a56e393f0bbbe543d9877e911ecb7036b9f95bec9a068e3f38f8af504"
+    },
+    {
+      "name": "adopt_existing_category",
+      "basis": {
+        "id": 7,
+        "text": "按钮需对齐",
+        "category": "视觉",
+        "shot": "shots/007.png",
+        "refs": []
+      },
+      "basisHashes": {
+        "shots/007.png": "e6c0c7aad1cf798aee145f1e5991e712995c9d757a1aeb55f594b360783b923d"
+      },
+      "applies": {
+        "id": 7,
+        "text": "按钮需对齐",
+        "category": "交互",
+        "shot": "shots/007.png",
+        "refs": []
+      },
+      "appliesHashes": {
+        "shots/007.png": "e6c0c7aad1cf798aee145f1e5991e712995c9d757a1aeb55f594b360783b923d"
+      },
+      "transform": {
+        "schemaVersion": 1,
+        "adoptedCategory": "交互",
+        "addedEvidence": []
+      },
+      "basisSourceHash": "02ace0ec3fba981a542e115eee885de08818b36b949b394eb31e11c071898f10",
+      "appliesToSourceHash": "6eb7913cfa62de189722169298ba840d1bb9186a50a103247791a4af1373d9b6"
+    },
+    {
+      "name": "append_reference_with_unicode",
+      "basis": {
+        "id": 9,
+        "text": "侧栏位置与参考不同",
+        "category": "视觉",
+        "observed": "右边遮挡",
+        "shot": "shots/ui.png",
+        "refs": [
+          "refs/设计A.png"
+        ]
+      },
+      "basisHashes": {
+        "shots/ui.png": "e6c0c7aad1cf798aee145f1e5991e712995c9d757a1aeb55f594b360783b923d",
+        "refs/设计A.png": "90bedc9bac181c0672a1c6562315215b575ed6e6aadfb2a9032e50a5c50a619a"
+      },
+      "applies": {
+        "id": 9,
+        "text": "侧栏位置与参考不同",
+        "category": "视觉",
+        "observed": "右边遮挡",
+        "shot": "shots/ui.png",
+        "refs": [
+          "refs/设计A.png",
+          "refs/📐图B.png"
+        ]
+      },
+      "appliesHashes": {
+        "shots/ui.png": "e6c0c7aad1cf798aee145f1e5991e712995c9d757a1aeb55f594b360783b923d",
+        "refs/设计A.png": "90bedc9bac181c0672a1c6562315215b575ed6e6aadfb2a9032e50a5c50a619a",
+        "refs/📐图B.png": "f98b0c9cd77c2c9c5e26ae834b147811679d4fe9284f3b955707b15ce0cd176c"
+      },
+      "transform": {
+        "schemaVersion": 1,
+        "adoptedCategory": null,
+        "addedEvidence": [
+          {
+            "path": "refs/📐图B.png",
+            "sha256": "f98b0c9cd77c2c9c5e26ae834b147811679d4fe9284f3b955707b15ce0cd176c"
+          }
+        ]
+      },
+      "basisSourceHash": "f6e7cf09f2ffc1b8bd0466e114f00fb3bc30f11b3fed67b0d2be3bef38604152",
+      "appliesToSourceHash": "092ea4d9f711bf95564ffe8e3b8fceed41ef4315eae69e93009523768a937da6"
+    },
+    {
+      "name": "append_new_screenshot_and_reference",
+      "basis": {
+        "id": 21,
+        "text": "需对照截图",
+        "category": null,
+        "refs": []
+      },
+      "basisHashes": {},
+      "applies": {
+        "id": 21,
+        "text": "需对照截图",
+        "category": "文案",
+        "shot": "shots/new.png",
+        "refs": [
+          "refs/new.webp"
+        ]
+      },
+      "appliesHashes": {
+        "shots/new.png": "e6c0c7aad1cf798aee145f1e5991e712995c9d757a1aeb55f594b360783b923d",
+        "refs/new.webp": "90bedc9bac181c0672a1c6562315215b575ed6e6aadfb2a9032e50a5c50a619a"
+      },
+      "transform": {
+        "schemaVersion": 1,
+        "adoptedCategory": "文案",
+        "addedEvidence": [
+          {
+            "path": "shots/new.png",
+            "sha256": "e6c0c7aad1cf798aee145f1e5991e712995c9d757a1aeb55f594b360783b923d"
+          },
+          {
+            "path": "refs/new.webp",
+            "sha256": "90bedc9bac181c0672a1c6562315215b575ed6e6aadfb2a9032e50a5c50a619a"
+          }
+        ]
+      },
+      "basisSourceHash": "a6c4be1644e1c087129786631851968940c62f2136e65b661a38ee7ed3199cb7",
+      "appliesToSourceHash": "b0fc1673e50468b48138d81c8d1f42ca4c6ce1cb43e472ed488a3352c75acaf9"
+    }
+  ]
+}

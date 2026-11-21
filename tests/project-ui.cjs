@@ -20,14 +20,194 @@ async function save(page,text){const ui=page.locator('#kp-annotate-host');await 
  const chrome=browserExecutablePath();
  context=await chromium.launchPersistentContext(profile,{executablePath:chrome,headless:true,args:['--enable-unsafe-extension-debugging','--disable-extensions-except='+dir,'--load-extension='+dir],viewport:{width:1440,height:1000}});
  worker=context.serviceWorkers()[0]||await context.waitForEvent('serviceworker');id=worker.url().split('/')[2];cdp=await context.browser().newBrowserCDPSession();
- await worker.evaluate(testThread=>{globalThis.projectBinding=null;globalThis.projectPayloads=[];globalThis.projectResults=[];globalThis.projectFail=false;chrome.runtime.sendNativeMessage=async(host,m)=>{if(globalThis.projectFail)throw Error('Native host has exited.');if(m.op==='project-info')return{ok:true,binding:globalThis.projectBinding};if(m.op==='project-bind'){globalThis.projectBinding={projectId:m.projectId,projectName:m.projectName,projectRoot:m.projectRoot};return{ok:true,binding:globalThis.projectBinding};}if(m.op==='project-sync'){if(!globalThis.projectBinding)return{ok:true,bound:false};globalThis.projectPayloads.push(m);return{ok:true,bound:true,projectRoot:globalThis.projectBinding.projectRoot,batchId:m.batch.batchId,revision:'batch-version',items:m.batch.annotations.map(a=>({id:a.id,revision:'item-'+a.text,result:globalThis.projectResults.find(r=>r.id===a.id&&r.revision==='item-'+a.text)||null}))};}if(m.op==='project-read'){const m=globalThis.projectPayloads.at(-1);return{ok:true,binding:globalThis.projectBinding,bound:!!globalThis.projectBinding,projectRoot:globalThis.projectBinding?.projectRoot,batchId:m?.batch.batchId,revision:'batch-version',items:(m?.batch.annotations||[]).map(a=>({id:a.id,revision:'item-'+a.text,result:globalThis.projectResults.find(r=>r.id===a.id&&r.revision==='item-'+a.text)||null}))};}return{ok:true,defaultThread:testThread};};},TEST_THREAD_UUID);
+ await worker.evaluate(testThread=>{globalThis.projectBinding=null;globalThis.projectPayloads=[];globalThis.projectResults=[];globalThis.projectFail=false;globalThis.nativeDifferentRevision=false;chrome.runtime.sendNativeMessage=async(host,m)=>{if(globalThis.projectFail)throw Error('Native host has exited.');if(m.op==='project-info')return{ok:true,binding:globalThis.projectBinding};if(m.op==='project-bind'){globalThis.projectBinding={projectId:m.projectId,projectName:m.projectName,projectRoot:m.projectRoot};return{ok:true,binding:globalThis.projectBinding};}if(m.op==='project-sync'){if(!globalThis.projectBinding)return{ok:true,bound:false};globalThis.projectPayloads.push(m);return{ok:true,bound:true,projectRoot:globalThis.projectBinding.projectRoot,batchId:m.batch.batchId,revision:'c'.repeat(64),items:m.batch.annotations.map(a=>({id:a.id,revision:(a.text==='请将标题改为新文案'?'a':'b').repeat(64),result:globalThis.projectResults.find(r=>r.id===a.id&&r.revision===(a.text==='请将标题改为新文案'?'a':'b').repeat(64))||null}))};}if(m.op==='project-read'){const m=globalThis.projectPayloads.at(-1);return{ok:true,binding:globalThis.projectBinding,bound:!!globalThis.projectBinding,projectId:globalThis.projectBinding?.projectId,projectRoot:globalThis.projectBinding?.projectRoot,batchId:m?.batch.batchId,revision:(globalThis.nativeDifferentRevision?'d':'c').repeat(64),items:(m?.batch.annotations||[]).map(a=>({id:a.id,revision:(a.text==='请将标题改为新文案'?'a':'b').repeat(64),result:globalThis.projectResults.find(r=>r.id===a.id&&r.revision===(a.text==='请将标题改为新文案'?'a':'b').repeat(64))||null}))};}return{ok:true,defaultThread:testThread};};},TEST_THREAD_UUID);
  const page=await context.newPage();await page.goto('http://127.0.0.1:'+server.address().port+'/');const target=(await cdp.send('Target.getTargets',{filter:[{type:'tab',exclude:false}]})).targetInfos.find(t=>t.url===page.url());await cdp.send('Extensions.triggerAction',{id,targetId:target.targetId});
  const ui=page.locator('#kp-annotate-host');
  await check('项目本地入口保留原项目批次管理',async()=>{await ui.locator('[data-action=project]').waitFor({timeout:2000});await ui.locator('[data-action=list]').first().click();assert.equal(await ui.locator('[name=project]').count(),1);assert.equal(await ui.locator('[name=batch]').count(),1);});
  const dialog=await closedUI(page);
  await check('绑定界面隔离，合成事件不能设置项目路径',async()=>{await ui.locator('[data-action=project]').click();await dialog.wait('绑定');assert.equal(await page.evaluate(()=>!!document.querySelector('#kp-annotate-host').shadowRoot.querySelector('.ka-project')),false);await dialog.locator('input').evaluate(el=>{el.value='/tmp/evil';el.dispatchEvent(new Event('input',{bubbles:true,composed:true}));});await dialog.locator('[data-project=bind]').evaluate(el=>el.click());assert.equal(await worker.evaluate(()=>projectBinding),null);await dialog.locator('[data-project=bind]').click();assert.equal(await worker.evaluate(()=>projectBinding),null);});
  await check('真实绑定同步项目，保存新批注自动同步原话和图片',async()=>{await dialog.locator('input').fill('/tmp/kepler-ui-fixture');await dialog.locator('[data-project=bind]').click();await dialog.wait('已同步');await dialog.locator('[data-project=close]').click();await save(page,'请将标题改为新文案');await assertEventually(()=>worker.evaluate(()=>projectPayloads.some(p=>p.batch.annotations.some(a=>a.text==='请将标题改为新文案'))));const payload=await worker.evaluate(()=>projectPayloads.findLast(p=>p.batch.annotations.length));assert.equal(payload.aiTasks.tasks[0].rawComment,'请将标题改为新文案');assert.match(payload.assets[payload.batch.annotations[0].shot],/^data:image\/png;base64,/);});
- await check('AI回写显示待验收、说明及提交，不自动替用户完成',async()=>{await worker.evaluate(()=>{projectResults=[{id:1,revision:'item-请将标题改为新文案',status:'待验收',summary:'标题已改，等待验收',branch:'codex/annotation-fixture',commit:'a'.repeat(40),checks:[{command:'node check.cjs',exitCode:0}]}];});await ui.locator('[data-action=project-read]').click();await ui.locator('.ka-ai-result').filter({hasText:'待验收'}).waitFor();assert((await ui.locator('.ka-ai-result').textContent()).includes('标题已改'));assert((await ui.locator('article a').first().textContent()).includes('未处理'));await page.screenshot({path:path.join(output,'ai-result-visible.png')});});
- await check('修改原话后旧AI结果立即失效；查询故障保留浏览器批注',async()=>{await ui.locator('[data-edit="1"]').click();await ui.locator('[name=text]').fill('请改成另一标题');await ui.locator('[data-action=save]').click();await ui.locator('.ka-editor').waitFor({state:'hidden'});assert.equal(await ui.locator('.ka-ai-result').count(),0);await worker.evaluate(()=>{projectFail=true;});await ui.locator('[data-action=project-read]').click();await ui.locator('.ka-project-summary').filter({hasText:'保留'}).waitFor();assert.equal(await worker.evaluate(async()=>JSON.parse(await snapshot()).annotations.length),1);await worker.evaluate(()=>{projectFail=false;});});
+
+
+ await check('本地建议只读预览不覆盖用户草稿、原话和审计记录',async()=>{
+  await ui.locator('[data-edit="1"]').click();
+  await ui.locator('.ka-review-draft').waitFor({state:'visible'});
+  await ui.locator('.ka-review-state').filter({hasText:'尚未作出决定'}).waitFor();
+  await ui.locator('[data-action=review-local-preview]').evaluate(el=>el.click());
+  assert.equal(await ui.locator('[name=review-proposal]').inputValue(),'','脚本合成点击无效');
+  await ui.locator('[data-action=review-local-preview]').click();
+  await assertEventually(async()=>(await ui.locator('[name=review-proposal]').inputValue()).includes('请将标题改为新文案'));
+  assert.match(await ui.locator('[name=review-proposal]').inputValue(),/不能推断修改目标/);
+  await ui.locator('[name=review-proposal]').fill('用户自己编辑的建议');
+  await ui.locator('[data-action=review-local-preview]').click();
+  assert.equal(await ui.locator('[name=review-proposal]').inputValue(),'用户自己编辑的建议');
+  const saved=await worker.evaluate(async()=>({
+    batch:JSON.parse(await snapshot()),
+    events:(await chrome.storage.local.get('kp-annotate-review-decisions-v1'))['kp-annotate-review-decisions-v1']
+  }));
+  assert.equal(saved.batch.annotations[0].text,'请将标题改为新文案');
+  assert.equal(saved.events,undefined,'只读候选不产生批准事件');
+  assert.equal(saved.batch.approvedSnapshot,undefined);
+  await ui.locator('[data-action=cancel]').click();
+ });
+
+
+ await check('本地建议整理可显式取消，迟到 Provider 结果不覆盖草稿',async()=>{
+   await ui.locator('[data-edit="1"]').click();
+   await ui.locator('.ka-review-state').filter({hasText:'尚未作出决定'}).waitFor();
+   await worker.evaluate(()=>{
+     globalThis.__reviewOriginalProvider = globalThis.KPReviewProvider;
+     globalThis.__reviewPreviewHold = {started:false,aborted:false,finish:null};
+     const adapter = __reviewOriginalProvider.createAdapter('local-template', (_, {signal}) => new Promise(resolve=>{
+       __reviewPreviewHold.started = true;
+       signal.addEventListener('abort',()=>{__reviewPreviewHold.aborted=true;},{once:true});
+       __reviewPreviewHold.finish = () => resolve({
+         schemaVersion:1,origin:'local-template',readOnly:true,
+         proposal:'取消后不应出现的迟到建议',needsConfirmation:false
+       });
+     }));
+     globalThis.KPReviewProvider = {...__reviewOriginalProvider,requestLocal:adapter.request};
+   });
+   try {
+     await ui.locator('[data-action=review-local-preview]').click();
+     await assertEventually(()=>worker.evaluate(()=>globalThis.__reviewPreviewHold.started));
+     await ui.locator('[data-action=review-preview-cancel]').evaluate(button=>button.click());
+     assert.equal(await worker.evaluate(()=>globalThis.__reviewPreviewHold.aborted),false,'合成点击不能取消');
+     await ui.locator('[data-action=review-preview-cancel]').click();
+     await assertEventually(()=>worker.evaluate(()=>globalThis.__reviewPreviewHold.aborted));
+     await ui.locator('.ka-review-state').filter({hasText:'已停止整理'}).waitFor();
+     await assertEventually(()=>worker.evaluate(()=>reviewPreviewRequests.size===0));
+     await worker.evaluate(()=>globalThis.__reviewPreviewHold.finish());
+     assert.equal(await ui.locator('[name=review-proposal]').inputValue(),'');
+     assert.equal(await worker.evaluate(async()=>
+       (await chrome.storage.local.get('kp-annotate-review-decisions-v1'))['kp-annotate-review-decisions-v1']),undefined,
+       '取消整理不能留下批准事件');
+   } finally {
+     await worker.evaluate(()=>{
+       globalThis.__reviewPreviewHold?.finish?.();
+       globalThis.KPReviewProvider=globalThis.__reviewOriginalProvider;
+       delete globalThis.__reviewPreviewHold;delete globalThis.__reviewOriginalProvider;
+     });
+     if(await ui.locator('.ka-editor').isVisible())await ui.locator('[data-action=cancel]').click();
+   }
+ });
+
+ await check('人工决定在原编辑器生成本地历史，拒绝脚本点击且不改 v1 原话',async()=>{
+  await ui.locator('[data-edit="1"]').click();
+  await ui.locator('.ka-review-draft').waitFor({state:'visible'});
+  await ui.locator('.ka-review-state').filter({hasText:'尚未作出决定'}).waitFor();
+  await ui.locator('[name=review-proposal]').fill('建议把标题改为更简洁的表达');
+  await ui.locator('[data-action=review-adopt]').evaluate(button=>button.click());
+  const empty=await worker.evaluate(async()=>((await chrome.storage.local.get('kp-annotate-review-decisions-v1'))['kp-annotate-review-decisions-v1']));
+  assert.equal(empty,undefined,'脚本合成点击不产生事件');
+  await ui.locator('[data-action=review-reject]').click();
+  await ui.locator('.ka-review-state').filter({hasText:'已拒绝草稿'}).waitFor();
+  await ui.locator('[name=review-proposal]').fill('调整标题前先复核预期');
+  await ui.locator('[data-action=review-reconfirm]').click();
+  await ui.locator('.ka-review-state').filter({hasText:'已重新确认'}).waitFor();
+  await ui.locator('[data-action=review-withdraw]').click();
+  await ui.locator('.ka-review-state').filter({hasText:'已撤回采纳'}).waitFor();
+  await ui.locator('.ka-review-state').filter({hasText:'当前 Native 条目版本复核一致'}).waitFor();
+  const audit=await worker.evaluate(async()=>((await chrome.storage.local.get('kp-annotate-review-decisions-v1'))['kp-annotate-review-decisions-v1']));
+  const records=Object.values(audit.records)[0];
+  assert.equal(records.length,3);
+  assert.deepEqual(records.map(e=>e.action),['reject','reconfirm','withdraw']);
+  assert.equal(records[1].previousId,records[0].id);
+  assert.equal(records[2].previousId,records[1].id);
+  assert.equal(records[2].sourceSnapshotHash,records[0].sourceSnapshotHash);
+  assert.match(records[2].sourceHash,/^[a-f0-9]{64}$/,'规范化 H1 来源摘要已绑定');
+  assert.equal(records[2].nativeItemRevision,'a'.repeat(64),'本地决定记录了真实同步后的精确 Native 条目版本');
+  assert.equal(records[2].nativeBatchRevision,'c'.repeat(64),'本地决定记录了所核对的 Native 批次版本');
+  assert.match(records[2].evidenceHashes['shots/001.png'],/^[a-f0-9]{64}$/,'截图实际字节已计算 SHA-256');
+  const tamper=await worker.evaluate(async()=>{
+    const raw=await snapshot(), batch=JSON.parse(raw), item=batch.annotations[0];
+    const assetKey=physicalPath(batch.batchId,item.shot);
+    const original=(await assets('readonly',[[assetKey]]))[assetKey];
+    const replacement='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l24AAAAASUVORK5CYII=';
+    try {
+      const normal=await reviewDecision({expected:raw,itemId:item.id},false);
+      await assets('readwrite',[[assetKey,replacement]]);
+      const changed=await reviewDecision({expected:raw,itemId:item.id},false);
+      let rejected=null;
+      try {
+        await reviewDecision({expected:raw,itemId:item.id,action:'reconfirm',proposal:'来自旧图片的决定必须拒绝',previousId:normal.event.id,expectedSourceHash:normal.sourceHash},true);
+      } catch(error) { rejected=error.code; }
+      const state=(await chrome.storage.local.get(REVIEW_DECISIONS))[REVIEW_DECISIONS];
+      return {normal:normal.stale,changed:changed.stale,normalHash:normal.event.sourceHash,rejected,
+        unchanged:state.records[JSON.stringify([batch.projectId,batch.batchId,item.id])].length===3};
+    } finally {
+      await assets('readwrite',[[assetKey,original]]);
+    }
+  });
+  const bindingCheck=await worker.evaluate(async()=>{
+    const raw=await snapshot(), batch=JSON.parse(raw);
+    const linked=await reviewNativeLink(batch,raw,1);
+    const current=await reviewDecision({expected:raw,itemId:1},false);
+    globalThis.nativeDifferentRevision=true;
+    const mismatched=await reviewNativeLink(batch,raw,1);
+    const changed=await reviewDecision({expected:raw,itemId:1},false);
+    globalThis.nativeDifferentRevision=false;
+    globalThis.projectFail=true;
+    const offline=await reviewNativeLink(batch,raw,1);
+    const unavailable=await reviewDecision({expected:raw,itemId:1},false);
+    globalThis.projectFail=false;
+    return {linked,mismatched,offline,witnesses:[current.nativeWitness,changed.nativeWitness,unavailable.nativeWitness]};
+  });
+  assert.equal(bindingCheck.linked?.itemRevision,'a'.repeat(64));
+  assert.equal(bindingCheck.mismatched,null,'Native HEAD 变化后不能复用上次同步的版本回执');
+  assert.equal(bindingCheck.offline,null,'Native 断连不得伪造条目版本');
+  assert.deepEqual(bindingCheck.witnesses,['current','unverified','unverified'],
+    '读回决定时须重新核对 Native；HEAD 变化和离线均不得标记当前已验证');
+  assert.equal(tamper.normal,false,'原图片与来源摘要一致');
+  assert.equal(tamper.changed,true,'图片内容变化但批注 JSON 不变时旧决定必须失效');
+  assert.equal(tamper.rejected,'KP_REVIEW_SOURCE_CONFLICT','界面读取后图片被替换，旧来源令牌不得写入新决定');
+  assert.equal(tamper.unchanged,true,'冲突不能添加任何审计事件');
+  assert.equal(tamper.normalHash,records[2].sourceHash);
+  const saved=await worker.evaluate(async()=>JSON.parse(await snapshot()));
+  assert.equal(saved.annotations[0].text,'请将标题改为新文案');
+  assert.equal(saved.approvedSnapshot,undefined);
+  assert.equal(saved.annotations[0].approvedReview,undefined);
+  await worker.evaluate(()=>{nativeDifferentRevision=true;});
+  await ui.locator('[data-action=cancel]').click();
+  await ui.locator('[data-edit="1"]').click();
+  await ui.locator('.ka-review-state').filter({hasText:'仅保留记录时版本；当前未复核'}).waitFor();
+  await worker.evaluate(()=>{nativeDifferentRevision=false;});
+  await ui.locator('[data-action=cancel]').click();
+ });
+ await check('非可信 DOM 点击和表单提交不能保存或修改原批注',async()=>{
+  await ui.locator('[data-edit="1"]').click();
+  await ui.locator('[name=text]').fill('合成页面脚本企图改写原话');
+  await ui.locator('[data-action=save]').evaluate(button=>button.click());
+  assert.equal(await ui.locator('.ka-editor').isVisible(),true,'脚本点击不能关闭编辑器');
+  await ui.locator('.ka-editor form').evaluate(form=>form.requestSubmit());
+  assert.equal(await ui.locator('.ka-editor').isVisible(),true,'隐式表单提交不能保存');
+  const persisted=await worker.evaluate(async()=>JSON.parse(await snapshot()));
+  assert.equal(persisted.annotations.find(a=>a.id===1)?.text,'请将标题改为新文案');
+  await ui.locator('[data-action=cancel]').click();
+ });
+ await check('本地类别候选不覆盖原话，只有真实用户点击才采纳',async()=>{
+  assert.equal(await ui.locator('[data-edit="1"]').count(),1,'真实保存后才进行编辑器候选验收');
+  await ui.locator('[data-edit="1"]').click();
+  await ui.locator('[name=text]').fill('这里有错别字');
+  await ui.locator('.ka-category-suggestion').waitFor({state:'visible'});
+  assert.equal(await ui.locator('[name=category]').inputValue(),'视觉');
+  await ui.locator('[data-action=adopt-category]').evaluate(button=>button.click());
+  assert.equal(await ui.locator('[name=category]').inputValue(),'视觉');
+  await ui.locator('[data-action=dismiss-category]').click();
+  assert.equal(await ui.locator('.ka-category-suggestion').isVisible(),false);
+  await ui.locator('[name=text]').fill('文字错误需要调整');
+  await ui.locator('.ka-category-suggestion').waitFor({state:'visible'});
+  await ui.locator('[data-action=adopt-category]').click();
+  assert.equal(await ui.locator('[name=category]').inputValue(),'文案');
+  assert.equal(await ui.locator('[name=text]').inputValue(),'文字错误需要调整');
+  await ui.locator('[data-action=cancel]').click();
+ });
+ await check('AI回写显示待验收、说明及提交，不自动替用户完成',async()=>{await worker.evaluate(()=>{projectResults=[{id:1,revision:'a'.repeat(64),status:'待验收',summary:'标题已改，等待验收',branch:'codex/annotation-fixture',commit:'a'.repeat(40),checks:[{command:'node check.cjs',exitCode:0}]}];});await ui.locator('[data-action=project-read]').click();await ui.locator('.ka-ai-result').filter({hasText:'待验收'}).waitFor();assert((await ui.locator('.ka-ai-result').textContent()).includes('标题已改'));assert((await ui.locator('article a').first().textContent()).includes('未处理'));await page.screenshot({path:path.join(output,'ai-result-visible.png')});});
+ await check('修改原话后旧AI结果立即失效；查询故障保留浏览器批注',async()=>{await ui.locator('[data-edit="1"]').click();await ui.locator('[name=text]').fill('请改成另一标题');await ui.locator('[data-action=save]').click();await ui.locator('.ka-editor').waitFor({state:'hidden'});assert.equal(await ui.locator('.ka-ai-result').count(),0);await worker.evaluate(()=>{projectFail=true;});await ui.locator('[data-action=project-read]').click();await ui.locator('.ka-project-summary').filter({hasText:'保留'}).waitFor();assert.equal(await worker.evaluate(async()=>JSON.parse(await snapshot()).annotations.length),1);await worker.evaluate(()=>{projectFail=false;});
+  await ui.locator('[data-edit="1"]').click();
+  await ui.locator('.ka-review-state').filter({hasText:'旧决定已过期'}).waitFor();
+  assert.equal(await ui.locator('[data-action=review-reconfirm]').isVisible(),true);
+  await ui.locator('[data-action=cancel]').click();
+ });
  await page.screenshot({path:path.join(output,'project-results.png')});report.status='passed';record();console.log(JSON.stringify({output,checks:report.checks.length,status:report.status}));
 })().catch(e=>{report.status='failed';record();console.error(e);process.exitCode=1;}).finally(async()=>{if(context)await context.close();server.close();});

@@ -1,8 +1,184 @@
 'use strict';
-if (typeof importScripts === 'function') importScripts('kp-annotate-store.js');
+if (typeof importScripts === 'function') importScripts('kp-annotate-store.js', 'review-source.js', 'review-suggestion.js', 'review-provider.js');
 const KEY = ['kp', 'annotate', 'batch', 'v1'].join('-');
 const LIBRARY = 'kp-annotate-library-v1';
 const PROJECT_SYNC = 'kp-annotate-project-sync-v1';
+const REVIEW_DECISIONS = 'kp-annotate-review-decisions-v1';
+async function reviewImageHashes(batchId, item) {
+  const paths = [item.shot, ...(item.refs || [])].filter(Boolean);
+  const hashes = {};
+  for (const path of paths) {
+    if (!imagePath(path) || Object.hasOwn(hashes, path)) throw Error('评审图片引用无效或重复');
+    const dataURL = await getBatchAsset(batchId, path);
+    if (typeof dataURL !== 'string' || !/^data:image\/(?:png|jpeg|webp);base64,/.test(dataURL)) {
+      throw Error('评审图片缺失或格式无效，不能记录新决定');
+    }
+    // fetch(data:) 仅解码 IndexedDB 图片，不发起远端请求。
+    const response = await fetch(dataURL);
+    if (!response.ok) throw Error('评审图片解码失败');
+    const digest = await crypto.subtle.digest('SHA-256', await response.arrayBuffer());
+    hashes[path] = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  return hashes;
+}
+async function sha256Text(value) {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+// A read-only Native receipt is evidence of a local item revision, NOT proof
+// of the human decision. Unavailable or changed hosts leave the decision local.
+async function reviewNativeLink(batch, raw, itemId) {
+  const saved = (await chrome.storage.local.get(PROJECT_SYNC))[PROJECT_SYNC] || {};
+  const sync = saved[batch.projectId];
+  if (sync?.state !== 'synced' || sync.batchId !== batch.batchId ||
+      sync.batchSnapshotHash !== await sha256Text(raw) ||
+      !/^[a-f0-9]{64}$/.test(sync.revision || '') || !sync.projectRoot) return null;
+  let native;
+  try {
+    native = await nativeCodex({op:'project-read', projectId:batch.projectId, batchId:batch.batchId});
+  } catch (_) {
+    return null; // Offline manual decisions remain usable, but unbound.
+  }
+  if (native.bound !== true || native.projectId !== batch.projectId ||
+      native.batchId !== batch.batchId || native.projectRoot !== sync.projectRoot ||
+      native.revision !== sync.revision || !Array.isArray(native.items) ||
+      native.items.length !== batch.annotations.length) return null;
+  const ids = new Set(batch.annotations.map(item => item.id)), seen = new Set();
+  for (const item of native.items) {
+    if (!ids.has(item.id) || seen.has(item.id) ||
+        typeof item.revision !== 'string' || !/^[a-f0-9]{64}$/.test(item.revision)) return null;
+    seen.add(item.id);
+  }
+  return {batchRevision:native.revision, itemRevision:native.items.find(item => item.id === itemId).revision};
+}
+
+// Preview only: no external model, Native call, network, or write to decision history.
+async function reviewLocalPreview(data, signal) {
+  const lib = await ensureLibrary();
+  if (await snapshot() !== data.expected) throw conflict();
+  if (!Number.isSafeInteger(data.itemId) || data.itemId < 1) throw Error('批注编号无效');
+  const batch = lib.batches.find(b => b.batchId === lib.activeBatchId);
+  const item = batch?.annotations.find(a => a.id === data.itemId);
+  if (!item) throw Error('请先保存批注，再整理本地建议');
+  const hashes = await reviewImageHashes(batch.batchId, item);
+  const sourceHash = await globalThis.KPReviewSource.sourceHash(item, hashes);
+  if (sourceHash !== data.expectedSourceHash) {
+    const error = Error('原批注或实际图片已变化，请重新读取后再整理');
+    error.code = 'KP_REVIEW_SOURCE_CONFLICT';
+    throw error;
+  }
+  if (signal.aborted) throw reviewPreviewCancelled();
+  const candidate = await globalThis.KPReviewProvider.requestLocal({annotation:item,sourceHash,signal});
+  if (signal.aborted) throw reviewPreviewCancelled();
+  // The preview runs outside the storage queue. Verify both batch and actual
+  // image bytes again after any asynchronous provider response.
+  if (await snapshot() !== data.expected) throw conflict();
+  const currentHashes = await reviewImageHashes(batch.batchId, item);
+  if (await globalThis.KPReviewSource.sourceHash(item, currentHashes) !== sourceHash) {
+    const error = Error('建议等待期间实际图片已变化，请重新打开批注');
+    error.code = 'KP_REVIEW_SOURCE_CONFLICT';
+    throw error;
+  }
+  if (await snapshot() !== data.expected) throw conflict();
+  if (signal.aborted) throw reviewPreviewCancelled();
+  return candidate;
+}
+
+
+const reviewPreviewRequests = new Map();
+function reviewPreviewCancelled() {
+  const error = Error('建议请求已取消，原始批注未改变');
+  error.code = 'KP_REVIEW_PROVIDER_CANCELLED';
+  return error;
+}
+function reviewPreviewRequestId(data) {
+  if (typeof data?.requestId !== 'string' ||
+      !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(data.requestId))
+    throw Error('建议请求标识无效');
+  return data.requestId;
+}
+function reviewPreviewOwner(sender) {
+  return JSON.stringify([sender.tab.id, sender.documentId || sender.url]);
+}
+async function startReviewPreview(data, sender) {
+  const requestId = reviewPreviewRequestId(data);
+  const owner = reviewPreviewOwner(sender);
+  reviewPreviewRequests.get(owner)?.controller.abort();
+  const ticket = {requestId, controller:new AbortController()};
+  reviewPreviewRequests.set(owner,ticket);
+  try {
+    return await reviewLocalPreview(data,ticket.controller.signal);
+  } finally {
+    if (reviewPreviewRequests.get(owner) === ticket) reviewPreviewRequests.delete(owner);
+  }
+}
+function cancelReviewPreview(data, sender) {
+  const requestId = reviewPreviewRequestId(data);
+  const ticket = reviewPreviewRequests.get(reviewPreviewOwner(sender));
+  if (!ticket || ticket.requestId !== requestId) return {cancelled:false};
+  ticket.controller.abort();
+  return {cancelled:true};
+}
+
+async function reviewDecision(data, write) {
+  const lib = await ensureLibrary();
+  if (await snapshot() !== data.expected) throw conflict();
+  if (!Number.isSafeInteger(data.itemId) || data.itemId < 1) throw Error('批注编号无效');
+  const batch = lib.batches.find(b => b.batchId === lib.activeBatchId);
+  const item = batch?.annotations.find(a => a.id === data.itemId);
+  if (!item) throw Error('请先保存批注，再记录建议决定');
+  const key = JSON.stringify([batch.projectId, batch.batchId, item.id]);
+  const sourceSnapshotHash = await sha256Text(JSON.stringify(item));
+  const evidenceHashes = await reviewImageHashes(batch.batchId, item);
+  const sourceHash = await globalThis.KPReviewSource.sourceHash(item, evidenceHashes);
+  const state = (await chrome.storage.local.get(REVIEW_DECISIONS))[REVIEW_DECISIONS] || {schemaVersion:1,records:{}};
+  if (state.schemaVersion !== 1 || !state.records || Array.isArray(state.records) || typeof state.records !== 'object') throw Error('本地建议历史损坏，请先备份');
+  const events = state.records[key] || [];
+  if (!Array.isArray(events) || events.length > 128) throw Error('建议历史无效');
+  const previous = events.at(-1) || null;
+  if (write) {
+    if (data.expectedSourceHash !== sourceHash) {
+      const error = Error('批注或图片在查看后发生变化，请重新读取最新来源再决定');
+      error.code = 'KP_REVIEW_SOURCE_CONFLICT';
+      throw error;
+    }
+    if (!['adopt','reject','reconfirm','withdraw'].includes(data.action)) throw Error('建议决定动作无效');
+    if ((data.previousId ?? null) !== (previous?.id ?? null)) {
+      const error = Error('建议决定已变化，请重新打开编辑器');
+      error.code = 'KP_REVIEW_DECISION_CONFLICT';
+      throw error;
+    }
+    if (!previous && !['adopt','reject'].includes(data.action)) throw Error('首次只能采纳或拒绝');
+    if (previous && !['reconfirm','withdraw'].includes(data.action)) throw Error('后续必须重新确认或撤回');
+    if (data.action === 'withdraw' && !['adopt','reconfirm'].includes(previous?.action)) throw Error('不存在可撤回的采纳');
+    if (events.length === 128) throw Error('本地建议历史已满，请先备份');
+    const proposal = data.action === 'withdraw' ? previous.proposal : data.proposal;
+    if (typeof proposal !== 'string' || !proposal.trim() || proposal.length > 3000) throw Error('建议草稿须为1至3000字');
+    const nativeLink = await reviewNativeLink(batch, data.expected, item.id);
+    const event = {id:crypto.randomUUID(),action:data.action,projectId:batch.projectId,batchId:batch.batchId,itemId:item.id,sourceSnapshotHash,sourceHash,evidenceHashes,proposal,previousId:previous?.id || null,nativeBatchRevision:nativeLink?.batchRevision || null,nativeItemRevision:nativeLink?.itemRevision || null,createdAt:new Date().toISOString()};
+    if (await snapshot() !== data.expected) throw conflict();
+    state.records[key] = [...events,event];
+    await chrome.storage.local.set({[REVIEW_DECISIONS]:state});
+    return {event,stale:false,count:events.length+1,sourceHash,
+      nativeWitness:nativeLink ? 'current' : 'unlinked'};
+  }
+  const stale=!!previous && (
+    previous.sourceSnapshotHash !== sourceSnapshotHash ||
+    previous.sourceHash !== sourceHash ||
+    JSON.stringify(previous.evidenceHashes) !== JSON.stringify(evidenceHashes)
+  );
+  // A stored version witness describes the past. Recheck the current Native
+  // HEAD before displaying it as current; absence or failure never grants trust.
+  let nativeWitness='unlinked';
+  if (!stale && previous?.nativeBatchRevision && previous?.nativeItemRevision) {
+    const nativeLink=await reviewNativeLink(batch,data.expected,item.id);
+    nativeWitness=nativeLink?.batchRevision===previous.nativeBatchRevision &&
+      nativeLink?.itemRevision===previous.nativeItemRevision ? 'current' : 'unverified';
+  }
+  if (await snapshot() !== data.expected) throw conflict();
+  return {event:previous,stale,count:events.length,sourceHash,nativeWitness};
+}
 let queue = Promise.resolve(), lastCapture = 0;
 const serial = fn => { const result = queue.then(fn); queue = result.catch(() => {}); return result; };
 const imagePath = key => typeof key === 'string' && /^(shots|refs)\/[\w.-]+\.(png|jpg|webp)$/.test(key);
@@ -204,7 +380,7 @@ async function checkProjectSnapshot(expected) {
 }
 async function projectSyncState(projectId,state,message,result={}) {
   const value={projectId,state,message,updatedAt:new Date().toISOString()};
-  for(const key of ['projectRoot','batchId','revision'])if(result[key]!==undefined)value[key]=result[key];
+  for(const key of ['projectRoot','batchId','revision','batchSnapshotHash'])if(result[key]!==undefined)value[key]=result[key];
   try {
     const saved=(await chrome.storage.local.get(PROJECT_SYNC))[PROJECT_SYNC]||{};
     await chrome.storage.local.set({[PROJECT_SYNC]:{...saved,[projectId]:value}});
@@ -237,7 +413,7 @@ async function syncProject(lib,projectId,expected,batchId) {
     if(result.bound!==true||result.batchId!==payload.batch.batchId||typeof result.revision!=='string'||!Array.isArray(result.items))throw Error('项目同步回执无效，浏览器批注已保留');
     if(!current||payload.batch.batchId===lib.activeBatchId)current=result;
   }
-  await projectSyncState(projectId,'synced','浏览器批注已同步到本地项目',current);
+  await projectSyncState(projectId,'synced','浏览器批注已同步到本地项目',{...current,batchSnapshotHash:await sha256Text(expected)});
   return {...current,binding:info.binding};
 }
 async function autoSyncProjects(lib,projectIds,expected) {
@@ -279,6 +455,10 @@ async function handle(message, sender) {
     case 'commit': return serial(() => commit(message));
     case 'getAsset': return serial(()=>getBatchAsset(message.batchId,message.key));
     case 'prune': return serial(()=>pruneBatchAssets(message));
+    case 'review-local-preview': return startReviewPreview(message, sender);
+    case 'review-local-preview-cancel': return cancelReviewPreview(message, sender);
+    case 'review-decision-status': return serial(()=>reviewDecision(message,false));
+    case 'review-decision-record': return serial(()=>reviewDecision(message,true));
     case 'codex-info': return serial(()=>codexInfo(message));
     case 'codex-send': return serial(()=>sendToCodex(message));
     case 'project-info': case 'project-bind': case 'project-sync': case 'project-read': return serial(()=>projectRPC(message.op,message));
