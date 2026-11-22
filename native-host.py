@@ -468,13 +468,14 @@ def review_preview(host, request):
         "review-preview-request": {"op", "requestId", "provider", "synthetic", "sourceHash"},
         "review-preview-status": {"op", "requestId"},
         "review-preview-cancel": {"op", "requestId"},
+        "review-preview-fixture-complete": {"op", "requestId", "provider", "synthetic", "sourceHash"},
     }[op]
     if set(request) != required:
         raise ReviewPreviewError("REVIEW_PREVIEW_INVALID", "只读建议请求字段无效")
     request_id = request["requestId"]
     if not isinstance(request_id, str) or not PREVIEW_UUID.fullmatch(request_id):
         raise ReviewPreviewError("REVIEW_PREVIEW_INVALID", "requestId 必须为规范小写 UUID")
-    if op == "review-preview-request":
+    if op in ("review-preview-request", "review-preview-fixture-complete"):
         if request["provider"] != "synthetic-fixture" or request["synthetic"] is not True:
             raise ReviewPreviewError("REVIEW_PROVIDER_NOT_CONFIGURED", "仅提供显式合成测试；真实模型尚未配置")
         value = request["sourceHash"]
@@ -530,12 +531,18 @@ def review_preview(host, request):
                     changed = True
                 response = {"ok": True, "requestId": request_id, "state": entry["state"],
                             "cancelled": cancelled, "synthetic": True}
-            else:
-                # Only the fixture advances on a status call; a real provider will
-                # require a separate worker, endpoint authorization and error recovery.
-                if entry["state"] == "queued":
+            elif op == "review-preview-fixture-complete":
+                # Explicit fixture worker transition. Polling status must never
+                # create a result or consume a queued request.
+                if entry["sourceHash"] != request["sourceHash"]:
+                    raise ReviewPreviewError("REVIEW_PREVIEW_CONFLICT", "合成完成来源与原请求不一致")
+                completed = entry["state"] == "queued"
+                if completed:
                     entry["state"] = "completed"
                     changed = True
+                response = {"ok": True, "requestId": request_id, "state": entry["state"],
+                            "synthetic": True, "completed": completed}
+            else:
                 response = {"ok": True, "requestId": request_id, "state": entry["state"],
                             "synthetic": True}
                 if entry["state"] == "completed":
@@ -583,7 +590,8 @@ class Host:
                     return self.project_store.sync(request)
                 return self.project_store.read(request.get("projectId"), request.get("batchId"), compact=True,
                                                accept_task_contract=request.get("acceptTaskContract"))
-            if request.get("op") in ("review-preview-request", "review-preview-status", "review-preview-cancel"):
+            if request.get("op") in ("review-preview-request", "review-preview-status",
+                                     "review-preview-cancel", "review-preview-fixture-complete"):
                 return review_preview(self, request)
             if request.get("op") != "send":
                 raise ValueError("op 仅支持 info 或 send")

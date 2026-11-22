@@ -109,11 +109,18 @@ print("queued")
         request_id = str(uuid.uuid4())
         request = {"op": "review-preview-request", "requestId": request_id,
                    "provider": "synthetic-fixture", "synthetic": True, "sourceHash": "a" * 64}
+        finish = dict(request, op="review-preview-fixture-complete")
         first = self.invoke(request)
         self.assertEqual((first["state"], first["duplicate"], first["synthetic"]), ("queued", False, True))
         self.host = self.module.Host(self.config)  # sendNativeMessage launches another process
         again = self.invoke(request)
         self.assertEqual((again["state"], again["duplicate"]), ("queued", True))
+        waiting = self.invoke({"op": "review-preview-status", "requestId": request_id})
+        self.assertEqual(waiting["state"], "queued")  # status is strictly read-only
+        self.assertNotIn("candidate", waiting)
+        self.assertEqual(self.invoke({"op": "review-preview-status", "requestId": request_id}), waiting)
+        self.assertTrue(self.invoke(finish)["completed"])
+        self.assertFalse(self.invoke(finish)["completed"])
         status = self.invoke({"op": "review-preview-status", "requestId": request_id})
         self.assertEqual(status["state"], "completed")
         self.assertEqual(status["candidate"]["origin"], "native-fixture")
@@ -134,7 +141,24 @@ print("queued")
         cancelled = self.invoke({"op": "review-preview-cancel", "requestId": other_id})
         self.assertTrue(cancelled["cancelled"])
         self.assertEqual(self.invoke({"op": "review-preview-status", "requestId": other_id})["state"], "cancelled")
+        self.assertFalse(self.invoke(dict(finish, requestId=other_id))["completed"])
         self.assertNotIn("candidate", self.invoke({"op": "review-preview-status", "requestId": other_id}))
+
+    def test_synthetic_preview_fixture_completion_cancel_race(self):
+        request_id = str(uuid.uuid4())
+        request = {"op": "review-preview-request", "requestId": request_id,
+                   "provider": "synthetic-fixture", "synthetic": True, "sourceHash": "d" * 64}
+        self.assertEqual(self.invoke(request)["state"], "queued")
+        finish = dict(request, op="review-preview-fixture-complete")
+        cancel = {"op": "review-preview-cancel", "requestId": request_id}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            future_finish = pool.submit(self.invoke, finish)
+            future_cancel = pool.submit(self.invoke, cancel)
+            finished, cancelled = future_finish.result(), future_cancel.result()
+        self.assertEqual(int(finished["completed"]) + int(cancelled["cancelled"]), 1)
+        state = self.invoke({"op": "review-preview-status", "requestId": request_id})
+        self.assertEqual(state["state"], "completed" if finished["completed"] else "cancelled")
+        self.assertEqual("candidate" in state, finished["completed"])
 
     def test_synthetic_preview_rejects_real_provider_payload_replay_and_corrupt_store(self):
         request_id = str(uuid.uuid4())
@@ -150,6 +174,11 @@ print("queued")
             self.assertEqual(self.invoke(dict(base, **patch_values))["code"], expected)
         self.assertEqual(self.invoke(base)["state"], "queued")
         self.assertEqual(self.invoke(dict(base, sourceHash="c" * 64))["code"], "REVIEW_PREVIEW_CONFLICT")
+        finish = dict(base, op="review-preview-fixture-complete")
+        self.assertEqual(self.invoke(dict(finish, sourceHash="c" * 64))["code"], "REVIEW_PREVIEW_CONFLICT")
+        self.assertEqual(self.invoke(dict(finish, synthetic=False))["code"], "REVIEW_PROVIDER_NOT_CONFIGURED")
+        self.assertEqual(self.invoke(dict(finish, extra="untrusted"))["code"], "REVIEW_PREVIEW_INVALID")
+        self.assertEqual(self.invoke({"op": "review-preview-status", "requestId": request_id})["state"], "queued")
         self.assertEqual(self.invoke({"op": "review-preview-status", "requestId": str(uuid.uuid4())})["code"],
                          "REVIEW_PREVIEW_NOT_FOUND")
         self.assertEqual(self.invoke({"op": "review-preview-cancel", "requestId": request_id, "text": "x"})["code"],

@@ -1,5 +1,9 @@
 # V1.5 AI 前端评审迭代计划
 
+## D1b-2 合成 Native 状态查询与执行状态拆分（2026-11-22）
+
+修复 D1b-1 中 `review-preview-status` 读取即将 queued 变 completed 的语义问题：轮询现在严格只读，只有显式合成测试操作 `review-preview-fixture-complete` 能在原有锁内将同来源、同 requestId 的 queued 请求变为 completed；必须提供 `synthetic:true`、`provider:synthetic-fixture` 和原始 `sourceHash`。取消与完成竞争时仅先取得锁的操作生效，已取消不可补发合成结果，重复完成幂等且 `completed:false`。新增跨 Host 重启、重复轮询、取消与完成竞态、伪造来源拒绝等隔离回归。读取状态不再伪装模型完成，仍无后台 worker、真实 Provider、网络请求或收费模型。原始数据、v1 哈希、评审批准与 `SOURCE_VALIDATION_PENDING` / `executable:false`、v2 send 门禁不变。真实用户设备 Chrome / Native 验收仍待执行；PR 继续 Draft。
+
 ## D1b-1 Native 合成建议 request/status/cancel 协议（2026-11-21）
 
 新增三个严格限定为合成测试的 Native Messaging 操作：`review-preview-request`、`review-preview-status` 和 `review-preview-cancel`。仅允许显式 `provider: synthetic-fixture`、`synthetic: true`、规范小写 UUID 和当前 H1 `sourceHash`；拒绝原文、URL、截图、凭据等额外输入字段。首次请求产生 queued 状态，第一次 status 在合成模式下产生标记为合成的只读结果；取消 queued 后不会再生成结果，完成后取消不会冒充成功。相同 ID/来源幂等，不同来源复用 ID 拒绝。状态跨 `sendNativeMessage` 短进程保存于本机 dataRoot，经专用锁、私有文件和原子更新保护，最多 128 条、1 小时过期；仅持久化 requestId、sourceHash、state、时间，不保存原始文字或建议正文。
