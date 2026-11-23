@@ -550,7 +550,9 @@ print("queued")
         cli = subprocess.run([str(source / "native-host-launcher"), "chrome-extension://" + "a" * 32 + "/"], input=frame({"op": "info"}) + frame(payload()), capture_output=True, env=environment)
         self.assertEqual(cli.returncode, 0, cli.stderr)
         replies = frames(cli.stdout)
-        self.assertEqual(replies[0], {"ok": True, "defaultThread": OTHER_THREAD, "capabilities": CAPABILITIES})
+        installed_capabilities = dict(CAPABILITIES, reviewPreviewLifecycle="disabled")
+        self.assertEqual(replies[0], {"ok": True, "defaultThread": OTHER_THREAD,
+                                      "capabilities": installed_capabilities})
         self.assertTrue(replies[1]["ok"], replies)
         self.assertEqual(self.calls()[0][2], THREAD)
 

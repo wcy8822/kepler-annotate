@@ -4,6 +4,8 @@
 
 D1b-2 已实现合成请求的显式完成，但四个测试端点此前在普通安装主机中也能调用。本轮将 `review-preview-request/status/cancel/fixture-complete` 统一置于主机显式布尔开关 `enableSyntheticReviewFixture: true` 之后。未设置、`false` 或字符串 `"true"` 均拒绝 `REVIEW_PROVIDER_NOT_CONFIGURED`，即使历史合成任务存在也不读取或修改其状态。正式安装器不暴露该开关；`info.capabilities.reviewPreviewLifecycle` 默认报告 `disabled`，隔离测试主机才报告 `synthetic_fixture_only`。新增 Native 和便携安装回归。
 
+首轮精确提交 `ebcf09e` 的 CI 揭示旧版 Native 安装器联调测试仍将已安装主机的 capability 预期写成 `synthetic_fixture_only`；运行行为实际正确报告 `disabled`。本轮仅修正该隔离测试的安装预期，保留已安装主机默认关闭；以最终修复 SHA 的 CI 结果为准。
+
 此改动隔离测试能力，不是独立模型 worker、真实建议、云端请求或编辑器 Native 接线。原始 v1 批注/编号/五类分类/截图/历史哈希、精确条目版本及本地建议不变。`SOURCE_VALIDATION_PENDING`、`executable:false` 与 v2 直送禁用仍生效。真实 Chrome/Native 设备验收仍待完成；PR 保持 Draft，不合并/发布。
 
 ## D1b-2 合成 Native 状态查询与执行状态拆分（2026-11-22）
