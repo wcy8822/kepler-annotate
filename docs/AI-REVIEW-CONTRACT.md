@@ -1,5 +1,11 @@
 # 实验性评审任务契约
 
+## D1b-3a 生产安装默认关闭合成 Native 建议接口（2026-11-23）
+
+D1b-2 已实现合成请求的显式完成，但四个测试端点此前在普通安装主机中也能调用。本轮将 `review-preview-request/status/cancel/fixture-complete` 统一置于主机显式布尔开关 `enableSyntheticReviewFixture: true` 之后。未设置、`false` 或字符串 `"true"` 均拒绝 `REVIEW_PROVIDER_NOT_CONFIGURED`，即使历史合成任务存在也不读取或修改其状态。正式安装器不暴露该开关；`info.capabilities.reviewPreviewLifecycle` 默认报告 `disabled`，隔离测试主机才报告 `synthetic_fixture_only`。新增 Native 和便携安装回归。
+
+此改动隔离测试能力，不是独立模型 worker、真实建议、云端请求或编辑器 Native 接线。原始 v1 批注/编号/五类分类/截图/历史哈希、精确条目版本及本地建议不变。`SOURCE_VALIDATION_PENDING`、`executable:false` 与 v2 直送禁用仍生效。真实 Chrome/Native 设备验收仍待完成；PR 保持 Draft，不合并/发布。
+
 ## D1b-2 合成 Native 状态查询与执行状态拆分（2026-11-22）
 
 修复 D1b-1 中 `review-preview-status` 读取即将 queued 变 completed 的语义问题：轮询现在严格只读，只有显式合成测试操作 `review-preview-fixture-complete` 能在原有锁内将同来源、同 requestId 的 queued 请求变为 completed；必须提供 `synthetic:true`、`provider:synthetic-fixture` 和原始 `sourceHash`。取消与完成竞争时仅先取得锁的操作生效，已取消不可补发合成结果，重复完成幂等且 `completed:false`。新增跨 Host 重启、重复轮询、取消与完成竞态、伪造来源拒绝等隔离回归。读取状态不再伪装模型完成，仍无后台 worker、真实 Provider、网络请求或收费模型。原始数据、v1 哈希、评审批准与 `SOURCE_VALIDATION_PENDING` / `executable:false`、v2 send 门禁不变。真实用户设备 Chrome / Native 验收仍待执行；PR 继续 Draft。

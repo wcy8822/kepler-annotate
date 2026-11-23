@@ -18,7 +18,7 @@ THREAD = "00000000-0000-4000-8000-000000000001"
 NO_THREAD_INFO = {"ok": True, "defaultThread": None, "capabilities": {
     "taskContracts": [1, 2], "reviewTaskValidation": "structure_and_evidence",
     "sourceBindingValidation": False, "reviewExecution": False,
-    "reviewPreviewLifecycle": "synthetic_fixture_only"}}
+    "reviewPreviewLifecycle": "disabled"}}
 
 
 def load(name, path):
@@ -82,6 +82,7 @@ class PortableInstallTest(unittest.TestCase):
         config = self.config()
         self.assertIsNone(config["defaultThread"])
         self.assertIsNone(config["codexPath"])
+        self.assertNotIn("enableSyntheticReviewFixture", config)
         host = self.native.Host(config)
         self.assertEqual(host.handle({"op": "info"}), NO_THREAD_INFO)
         self.assertIsNone(host.handle({"op": "project-info", "projectId": "public-demo"})["binding"])

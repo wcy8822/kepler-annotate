@@ -566,6 +566,8 @@ class Host:
             raise ValueError("dataRoot 必须为本地绝对路径")
         self.codex = codex or None
         self.root = Path(root)
+        # Synthetic review operations are for isolated fixtures, never normal installs.
+        self.synthetic_review_fixture_enabled = config.get("enableSyntheticReviewFixture") is True
         self.project_config = dict(config)
         self.project_store = None
 
@@ -577,7 +579,8 @@ class Host:
                 return {"ok": True, "defaultThread": self.default_thread, "capabilities": {
                     "taskContracts": [1, 2], "reviewTaskValidation": "structure_and_evidence",
                     "sourceBindingValidation": False, "reviewExecution": False,
-                    "reviewPreviewLifecycle": "synthetic_fixture_only"}}
+                    "reviewPreviewLifecycle": ("synthetic_fixture_only"
+                                               if self.synthetic_review_fixture_enabled else "disabled")}}
             if request.get("op") in ("project-info", "project-bind", "project-sync", "project-read"):
                 if self.project_store is None:
                     module = runpy.run_path(str(Path(__file__).resolve().with_name("project_store.py")))
@@ -592,6 +595,9 @@ class Host:
                                                accept_task_contract=request.get("acceptTaskContract"))
             if request.get("op") in ("review-preview-request", "review-preview-status",
                                      "review-preview-cancel", "review-preview-fixture-complete"):
+                if not self.synthetic_review_fixture_enabled:
+                    raise ReviewPreviewError("REVIEW_PROVIDER_NOT_CONFIGURED",
+                                             "合成建议测试接口默认关闭；当前未配置真实建议模型")
                 return review_preview(self, request)
             if request.get("op") != "send":
                 raise ValueError("op 仅支持 info 或 send")

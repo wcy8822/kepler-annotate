@@ -95,7 +95,8 @@ print("queued")
         self.module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.module)
         self.config = {"codexPath": str(self.fake), "defaultThread": THREAD,
-                       "dataRoot": str(self.root / "handoffs")}
+                       "dataRoot": str(self.root / "handoffs"),
+                       "enableSyntheticReviewFixture": True}
         self.host = self.module.Host(self.config)
 
     def calls(self):
@@ -104,6 +105,35 @@ print("queued")
     def invoke(self, data):
         return self.host.handle(copy.deepcopy(data))
 
+
+    def test_synthetic_preview_requires_explicit_test_host_opt_in(self):
+        request_id = str(uuid.uuid4())
+        request = {"op": "review-preview-request", "requestId": request_id,
+                   "provider": "synthetic-fixture", "synthetic": True, "sourceHash": "e" * 64}
+        self.assertEqual(self.invoke(request)["state"], "queued")
+        ledger = self.root / "handoffs" / "review-preview-jobs.json"
+        saved = ledger.read_bytes()
+
+        # Production installer does not include the test-only flag.
+        production_config = {key: value for key, value in self.config.items()
+                             if key != "enableSyntheticReviewFixture"}
+        self.host = self.module.Host(production_config)
+        self.assertEqual(self.invoke({"op": "info"})["capabilities"]["reviewPreviewLifecycle"], "disabled")
+        for op_request in (request,
+                           {"op": "review-preview-status", "requestId": request_id},
+                           {"op": "review-preview-cancel", "requestId": request_id},
+                           dict(request, op="review-preview-fixture-complete")):
+            with self.subTest(op=op_request["op"]):
+                response = self.invoke(op_request)
+                self.assertFalse(response["ok"])
+                self.assertEqual(response["code"], "REVIEW_PROVIDER_NOT_CONFIGURED")
+        self.assertEqual(ledger.read_bytes(), saved)
+
+        # A string is not an explicit boolean opt-in.
+        self.host = self.module.Host(dict(self.config, enableSyntheticReviewFixture="true"))
+        self.assertEqual(self.invoke({"op": "review-preview-status", "requestId": request_id})["code"],
+                         "REVIEW_PROVIDER_NOT_CONFIGURED")
+        self.assertEqual(ledger.read_bytes(), saved)
 
     def test_synthetic_preview_lifecycle_survives_native_process_restart(self):
         request_id = str(uuid.uuid4())
