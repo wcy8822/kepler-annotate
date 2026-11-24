@@ -1,5 +1,11 @@
 # 实验性评审任务契约
 
+## D1b-3b 独立单次合成执行器（2026-11-24）
+
+新增仅供隔离测试使用的本地命令 `python3 native-host.py --synthetic-review-worker-once`。必须使用现有显式布尔测试配置 `enableSyntheticReviewFixture: true`；默认安装拒绝，不新增浏览器可调用操作或能力声明。执行器复用 Native 请求状态文件与专用锁，在独立短进程中清理过期记录、按创建时间与请求 ID 选择一个仍 queued 的请求，并原子完成固定合成结果；已取消、已完成、已过期请求均不领取。两个执行器并发时各自最多完成一个不同请求，空队列返回 processed:false。浏览器 status 不负责执行任务；实际模型的长任务、租约、故障重试、真实数据授权及编辑器 Native 接线尚未实现。
+
+新增 Python 跨进程回归，覆盖并发、默认拒绝、Native 消息不可调用、取消及过期。仅使用虚构数据，无真实模型、网络、截图外发、常驻进程或用户批准；v1 原数据、历史 hash、精确 item revision、SOURCE_VALIDATION_PENDING、executable:false 与 v2 send 禁用不变。独立选择/取消/过期/并发烟测通过；完整仓库测试与公共扫描以本次精确提交的 CI 为准，真实设备待验收。Draft，不合并或发布。
+
 ## D1b-3a 生产安装默认关闭合成 Native 建议接口（2026-11-23）
 
 D1b-2 已实现合成请求的显式完成，但四个测试端点此前在普通安装主机中也能调用。本轮将 `review-preview-request/status/cancel/fixture-complete` 统一置于主机显式布尔开关 `enableSyntheticReviewFixture: true` 之后。未设置、`false` 或字符串 `"true"` 均拒绝 `REVIEW_PROVIDER_NOT_CONFIGURED`，即使历史合成任务存在也不读取或修改其状态。正式安装器不暴露该开关；`info.capabilities.reviewPreviewLifecycle` 默认报告 `disabled`，隔离测试主机才报告 `synthetic_fixture_only`。新增 Native 和便携安装回归。

@@ -135,6 +135,57 @@ print("queued")
                          "REVIEW_PROVIDER_NOT_CONFIGURED")
         self.assertEqual(ledger.read_bytes(), saved)
 
+    def test_synthetic_worker_process_handles_only_live_queued_fixtures(self):
+        command = [sys.executable, str(SOURCE / "native-host.py"),
+                   "--synthetic-review-worker-once"]
+        config_path = self.root / "worker-config.json"
+        config_path.write_text(json.dumps(self.config))
+        environment = dict(os.environ, KEPLER_ANNOTATE_CONFIG=str(config_path))
+
+        def worker():
+            result = subprocess.run(command, env=environment, capture_output=True,
+                                    text=True, timeout=10)
+            return result.returncode, json.loads(result.stdout)
+
+        requests = [{"op": "review-preview-request", "requestId": str(uuid.uuid4()),
+                     "provider": "synthetic-fixture", "synthetic": True,
+                     "sourceHash": "f" * 64} for _ in range(4)]
+        for request in requests:
+            self.assertEqual(self.invoke(request)["state"], "queued")
+        ids = [request["requestId"] for request in requests]
+        self.assertTrue(self.invoke({"op": "review-preview-cancel", "requestId": ids[2]})["cancelled"])
+        ledger = self.root / "handoffs" / "review-preview-jobs.json"
+        entries = json.loads(ledger.read_text())
+        entries["requests"][ids[3]]["createdAt"] = 0
+        ledger.write_text(json.dumps(entries))
+
+        # Neither a production configuration nor a browser message can run the worker.
+        before = ledger.read_bytes()
+        config_path.write_text(json.dumps(dict(self.config, enableSyntheticReviewFixture=False)))
+        code, response = worker()
+        self.assertEqual(code, 1)
+        self.assertEqual(response["code"], "REVIEW_PROVIDER_NOT_CONFIGURED")
+        self.assertFalse(self.invoke({"op": "review-preview-fixture-work-once"})["ok"])
+        self.assertEqual(ledger.read_bytes(), before)
+        config_path.write_text(json.dumps(self.config))
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(lambda _: worker(), range(2)))
+        self.assertEqual([code for code, _ in responses], [0, 0])
+        self.assertTrue(all(reply["processed"] and reply["synthetic"] for _, reply in responses))
+        self.assertEqual({reply["requestId"] for _, reply in responses}, set(ids[:2]))
+        self.assertEqual(worker(), (0, {"ok": True, "synthetic": True,
+                                       "processed": False, "requestId": None}))
+        for request_id in ids[:2]:
+            status = self.invoke({"op": "review-preview-status", "requestId": request_id})
+            self.assertEqual(status["state"], "completed")
+            self.assertEqual(status["candidate"]["origin"], "native-fixture")
+        self.assertEqual(self.invoke({"op": "review-preview-status", "requestId": ids[2]})["state"],
+                         "cancelled")
+        self.assertEqual(self.invoke({"op": "review-preview-status", "requestId": ids[3]})["code"],
+                         "REVIEW_PREVIEW_NOT_FOUND")
+        self.assertEqual(self.calls(), [])
+
     def test_synthetic_preview_lifecycle_survives_native_process_restart(self):
         request_id = str(uuid.uuid4())
         request = {"op": "review-preview-request", "requestId": request_id,

@@ -464,7 +464,11 @@ class ReviewPreviewError(ValueError):
 
 def review_preview(host, request):
     op = request["op"]
+    worker = op == "review-preview-fixture-work-once"
+    if worker and not host.synthetic_review_fixture_enabled:
+        raise ReviewPreviewError("REVIEW_PROVIDER_NOT_CONFIGURED", "合成建议执行器默认关闭")
     required = {
+        "review-preview-fixture-work-once": {"op"},
         "review-preview-request": {"op", "requestId", "provider", "synthetic", "sourceHash"},
         "review-preview-status": {"op", "requestId"},
         "review-preview-cancel": {"op", "requestId"},
@@ -472,8 +476,8 @@ def review_preview(host, request):
     }[op]
     if set(request) != required:
         raise ReviewPreviewError("REVIEW_PREVIEW_INVALID", "只读建议请求字段无效")
-    request_id = request["requestId"]
-    if not isinstance(request_id, str) or not PREVIEW_UUID.fullmatch(request_id):
+    request_id = request.get("requestId")
+    if not worker and (not isinstance(request_id, str) or not PREVIEW_UUID.fullmatch(request_id)):
         raise ReviewPreviewError("REVIEW_PREVIEW_INVALID", "requestId 必须为规范小写 UUID")
     if op in ("review-preview-request", "review-preview-fixture-complete"):
         if request["provider"] != "synthetic-fixture" or request["synthetic"] is not True:
@@ -509,7 +513,18 @@ def review_preview(host, request):
             del entries[key]
         changed = bool(expired)
         entry = entries.get(request_id)
-        if op == "review-preview-request":
+        if worker:
+            # Only the isolated CLI worker reaches this branch. The fixture has
+            # no external computation, so select and finish in one atomic write.
+            queued = [(entry["createdAt"], key) for key, entry in entries.items()
+                      if entry["state"] == "queued"]
+            selected = min(queued)[1] if queued else None
+            if selected is not None:
+                entries[selected]["state"] = "completed"
+                changed = True
+            response = {"ok": True, "synthetic": True, "processed": selected is not None,
+                        "requestId": selected}
+        elif op == "review-preview-request":
             if entry is not None and entry["sourceHash"] != request["sourceHash"]:
                 raise ReviewPreviewError("REVIEW_PREVIEW_CONFLICT", "requestId 不能复用于其他来源")
             duplicate = entry is not None
@@ -723,8 +738,27 @@ def load_config():
     return load_json(path)
 
 
+def synthetic_review_worker_main():
+    """Run one isolated fixture task; never start a model or persistent process."""
+    try:
+        host = Host(load_config())
+    except Exception:
+        print(json.dumps({"ok": False, "code": "CONFIG_ERROR"}))
+        return 1
+    try:
+        response = review_preview(host, {"op": "review-preview-fixture-work-once"})
+    except ReviewPreviewError as error:
+        response = {"ok": False, "code": error.code}
+    except Exception:
+        response = {"ok": False, "code": "REVIEW_PREVIEW_STORAGE_INVALID"}
+    print(json.dumps(response))
+    return 0 if response["ok"] else 1
+
+
 def main():
     os.umask(0o077)
+    if sys.argv[1:] == ["--synthetic-review-worker-once"]:
+        return synthetic_review_worker_main()
     try:
         host = Host(load_config())
     except Exception as error:
