@@ -78,6 +78,76 @@
     }
     return Object.freeze({id, request});
   }
+  // Test-only Native transport. It is never registered as a production provider.
+  // Only synthetic identifiers and an H1 digest cross this boundary, never input text.
+  function createNativeFixtureAdapter(send, {enabled = false, pollMs = 100} = {}) {
+    if (enabled !== true || typeof send !== 'function' ||
+        !Number.isInteger(pollMs) || pollMs < 1 || pollMs > 1000)
+      throw failure('KP_REVIEW_PROVIDER_CONFIG', '合成 Native 建议适配器默认关闭');
+    const invalid = () => failure('KP_REVIEW_PROVIDER_RESPONSE', '合成 Native 建议响应无效');
+    const cancelled = () => failure('KP_REVIEW_PROVIDER_CANCELLED', '建议请求已取消');
+    async function request({annotation, sourceHash, signal, timeoutMs} = {}) {
+      const requestId = globalThis.crypto.randomUUID();
+      const adapter = createAdapter('native-fixture', async (_, {signal}) => {
+        let submitted = false, terminal = false, cancellationSent = false;
+        const cancel = () => {
+          if (!submitted || terminal || cancellationSent) return;
+          cancellationSent = true;
+          // Best effort only. A lost host response is not proof of cancellation.
+          Promise.resolve().then(() => send({op:'review-preview-cancel',requestId})).catch(() => {});
+        };
+        const checkAbort = () => { if (signal.aborted) throw cancelled(); };
+        const checkEnvelope = reply => {
+          if (!reply || reply.ok !== true || reply.synthetic !== true ||
+              reply.requestId !== requestId) throw invalid();
+        };
+        signal.addEventListener('abort', cancel, {once:true});
+        try {
+          checkAbort();
+          const info = await send({op:'info'});
+          checkAbort();
+          if (info?.ok !== true || info.capabilities?.reviewPreviewLifecycle !== 'synthetic_fixture_only')
+            throw failure('KP_REVIEW_PROVIDER_CONFIG', 'Native 主机未启用隔离合成测试');
+          let ack;
+          // Wait for the submit response before cancelling, even if timeout
+          // occurs while submit is in flight. An early cancel could miss the job.
+          try {
+            ack = await send({op:'review-preview-request',requestId,
+              provider:'synthetic-fixture',synthetic:true,sourceHash});
+          } finally { submitted = true; }
+          checkAbort();
+          checkEnvelope(ack);
+          if (ack.provider !== 'synthetic-fixture' || ack.duplicate !== false || ack.state !== 'queued')
+            throw invalid();
+          for (;;) {
+            checkAbort();
+            const status = await send({op:'review-preview-status',requestId});
+            checkAbort();
+            checkEnvelope(status);
+            if (status.state === 'cancelled') {
+              terminal = true;
+              throw cancelled();
+            }
+            if (status.state === 'completed') {
+              if (!status.candidate || status.candidate.sourceHash !== sourceHash) throw invalid();
+              const {sourceHash: ignored, ...candidate} = status.candidate;
+              const checked = validateOutput(candidate, 'native-fixture');
+              if (checked.needsConfirmation !== true) throw invalid();
+              terminal = true;
+              return checked;
+            }
+            if (status.state !== 'queued' || Object.hasOwn(status,'candidate')) throw invalid();
+            await new Promise(resolve => setTimeout(resolve,pollMs));
+          }
+        } finally {
+          signal.removeEventListener('abort',cancel);
+          cancel();
+        }
+      });
+      return adapter.request({annotation,sourceHash,signal,timeoutMs});
+    }
+    return Object.freeze({id:'native-fixture',request});
+  }
   const local = createAdapter('local-template', annotation => suggestion.fromSavedAnnotation(annotation));
-  return Object.freeze({createAdapter, requestLocal: local.request});
+  return Object.freeze({createAdapter, createNativeFixtureAdapter, requestLocal: local.request});
 });

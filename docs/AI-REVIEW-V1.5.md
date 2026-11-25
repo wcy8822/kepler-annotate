@@ -1,5 +1,11 @@
 # V1.5 AI 前端评审迭代计划
 
+## D1b-3c Native 合成建议客户端桥接（2026-11-25）
+
+新增显式测试专用 `createNativeFixtureAdapter`：复用只读 Provider 的超时、取消、响应验证与来源绑定；先核对主机 capability，再发起 request、轮询 status，核对 requestId 和候选 H1 摘要。只传合成标志、请求标识与摘要，不传原文、URL、图片或凭据。提交未返回时发生取消，等提交响应后尽力清理，避免先取消后入队；不宣称未收到确认的任务已停止。普通运行仍只注册 local-template，编辑器不接受 native-fixture 结果，不新增权限、模型或外发。
+
+新增 Node 测试包括真实 Python Native 消息帧与独立合成执行器链路、禁用主机、错误来源和提交期间取消。提交前在隔离 JS 环境执行适配器正反例烟测并按公共内容规则扫描改动文件；完整 Node/Python/Chromium CI 以该精确提交结果为准。未接通生产编辑器的 Native 模型请求，真实模型配置、截图授权与实机验收仍待完成；v1、精确 item revision、SOURCE_VALIDATION_PENDING、executable:false 和 v2 send 门禁不变。
+
 ## D1b-3b 独立单次合成执行器（2026-11-24）
 
 新增仅供隔离测试使用的本地命令 `python3 native-host.py --synthetic-review-worker-once`。必须使用现有显式布尔测试配置 `enableSyntheticReviewFixture: true`；默认安装拒绝，不新增浏览器可调用操作或能力声明。执行器复用 Native 请求状态文件与专用锁，在独立短进程中清理过期记录、按创建时间与请求 ID 选择一个仍 queued 的请求，并原子完成固定合成结果；已取消、已完成、已过期请求均不领取。两个执行器并发时各自最多完成一个不同请求，空队列返回 processed:false。浏览器 status 不负责执行任务；实际模型的长任务、租约、故障重试、真实数据授权及编辑器 Native 接线尚未实现。

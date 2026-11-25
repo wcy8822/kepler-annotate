@@ -243,3 +243,8 @@ aiTasks (schemaVersion: 2)
 扩展后台使用 `review-provider.js` 校验 provider 输入/输出。输入仅限已保存批注的四个文本字段 `text/observed/expected/reproduction`，逐项不超过 4000 字符；`sourceHash` 必须为经过本地实际图片校验的 H1 SHA-256，但不作为 provider 能够修改的字段。响应必须**恰好**含 `schemaVersion:1, origin, readOnly:true, proposal, needsConfirmation`，其中来源须等于适配器 ID，建议正文 1–3000 字，未知字段与工具调用字段一律拒绝。后台附加只读 `sourceHash` 并在返回前重新校验实际图片和批次快照。现有 UI 继续只使用 `local-template`；通过测试注入的 provider 不是已获授权的真实模型。
 
 可替换的本机异步调用包装支持取消和超时，超时/取消均失败关闭且不写入批注、建议历史或任务；不承诺无法取消的第三方底层计算已停止，只保证拒绝迟到结果。该模块没有网络请求、凭据、常驻 Agent 或 Native review 实现。新增单元测试覆盖输入最小化、伪造能力、超时、取消、迟到回复及错误；合成浏览器旧流程由现有 Playwright 测试覆盖。完整模型发送权限和截图预览同意仍是独立的后续阶段，`SOURCE_VALIDATION_PENDING` / `executable:false`、v2 send 禁用不变。
+
+
+## D1b-3c 合成 Native 客户端边界（2026-11-25）
+
+`createNativeFixtureAdapter(send, {enabled:true})` 仅为显式隔离测试构造，不是模型配置或用户批准，不在生产入口注册。它要求 `info.capabilities.reviewPreviewLifecycle === "synthetic_fixture_only"`，发送的请求仅含 op/requestId/provider/synthetic/sourceHash，状态响应须绑定同一 requestId，完成候选须匹配 H1 且通过既有只读输出验证、needsConfirmation 必须为 true。异常、取消和超时不产生建议决定，尽力发送 cancel；请求仍在提交时，取消清理延后至提交响应返回。不可据此承诺主机已经停止。编辑器仍仅接受 local-template，不得把合成结果包装成真实模型建议。不改变 v1、执行门禁、真实数据传输权限或用户批准。
