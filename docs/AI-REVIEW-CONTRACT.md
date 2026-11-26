@@ -248,3 +248,8 @@ aiTasks (schemaVersion: 2)
 ## D1b-3c 合成 Native 客户端边界（2026-11-25）
 
 `createNativeFixtureAdapter(send, {enabled:true})` 仅为显式隔离测试构造，不是模型配置或用户批准，不在生产入口注册。它要求 `info.capabilities.reviewPreviewLifecycle === "synthetic_fixture_only"`，发送的请求仅含 op/requestId/provider/synthetic/sourceHash，状态响应须绑定同一 requestId，完成候选须匹配 H1 且通过既有只读输出验证、needsConfirmation 必须为 true。异常、取消和超时不产生建议决定，尽力发送 cancel；请求仍在提交时，取消清理延后至提交响应返回。不可据此承诺主机已经停止。编辑器仍仅接受 local-template，不得把合成结果包装成真实模型建议。不改变 v1、执行门禁、真实数据传输权限或用户批准。
+
+
+## C2 / D1 编辑器预览与人工编辑冲突（2026-11-26）
+
+原编辑器等待只读建议时，用户可信输入或参考图/分类操作取消当前请求并推进 UI 世代号，清空或撤回输入不会复活旧请求。填入候选之前再次核对原批注无未保存改动、当前批次快照与预期 H1、响应 sourceHash 及建议框为空；任何变化均保留人工草稿并拒绝旧结果。此规则只保护预览交互，不改变 v1、人工决定历史或执行授权，生产仍只使用本地模板，不调用 Native 模型或发送截图。

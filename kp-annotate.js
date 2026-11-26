@@ -246,28 +246,38 @@
         return current !== (saved[field] || (field === 'status' ? '未处理' : ''));
       });
     }
-    function cancelReviewPreview() {
+    function cancelReviewPreview(message = '已停止整理；原批注和已有建议草稿未改变。') {
       if (!activeReviewPreview) return;
       const requestId = activeReviewPreview;
       activeReviewPreview = null;
       ++reviewGeneration;
       reviewLoading = false;
-      showReviewStatus('已停止整理；原批注和已有建议草稿未改变。');
+      showReviewStatus(message);
       store.rpc('review-local-preview-cancel', {requestId}).catch(() => {});
+    }
+    function cancelReviewPreviewForEdit() {
+      cancelReviewPreview('编辑内容已变化，已停止整理；不会覆盖你的草稿。');
     }
     async function prepareLocalReviewPreview() {
       if (reviewLoading || busy || !reviewStatus || !draft?.existing || !editor.open) return;
       if (reviewAnnotationEdited()) throw Error('原批注有未保存的修改，请先保存并重新打开');
       const field = $('[name=review-proposal]');
-      if (field.value.trim()) { showReviewStatus('已有建议草稿，未覆盖；如需重新整理，请先自行清空草稿。'); return; }
+      if (field.value !== '') { showReviewStatus('已有建议草稿，未覆盖；如需重新整理，请先自行清空草稿。'); return; }
       const id = draft.id, batchId = draft.batchId, generation = ++reviewGeneration, requestId = crypto.randomUUID();
+      const expected = storedSnapshot, expectedSourceHash = reviewStatus.sourceHash;
       activeReviewPreview = requestId;
       reviewLoading = true; showReviewStatus('正在本地整理已保存批注…');
       let message = '';
       try {
-        const result = await store.rpc('review-local-preview', {expected:storedSnapshot,itemId:id,expectedSourceHash:reviewStatus.sourceHash,requestId});
-        if (generation !== reviewGeneration || !editor.open || !draft || draft.id !== id || draft.batchId !== batchId || field.value !== '') return;
-        if (result.origin !== 'local-template' || result.readOnly !== true || typeof result.proposal !== 'string') throw Error('本地建议响应格式无效');
+        const result = await store.rpc('review-local-preview', {expected,itemId:id,expectedSourceHash,requestId});
+        if (generation !== reviewGeneration || !editor.open || !draft || draft.id !== id || draft.batchId !== batchId) return;
+        if (field.value !== '' || reviewAnnotationEdited() || storedSnapshot !== expected ||
+            reviewStatus?.sourceHash !== expectedSourceHash) {
+          message = '编辑内容或来源已变化，未填入旧建议；请保存原批注后重新整理。';
+          return;
+        }
+        if (result.origin !== 'local-template' || result.readOnly !== true || result.sourceHash !== expectedSourceHash ||
+            typeof result.proposal !== 'string') throw Error('本地建议响应格式无效');
         field.value = result.proposal;
         message = result.needsConfirmation ?
           '已放入可编辑的本地草稿；原批注未填写预期，请先确认，未调用模型。' :
@@ -303,10 +313,10 @@
     }
     function renderRefs() {
       $('.ka-refs').replaceChildren();
-      for (const name of draft.refs) { const p=document.createElement('span'); p.textContent=name.split('/').at(-1); const b=document.createElement('button'); b.type='button'; b.textContent='移除'; b.onclick=()=>{draft.refs=draft.refs.filter(x=>x!==name);draft.removedRefs.push(name);renderRefs();};p.append(b);$('.ka-refs').append(p); }
+      for (const name of draft.refs) { const p=document.createElement('span'); p.textContent=name.split('/').at(-1); const b=document.createElement('button'); b.type='button'; b.textContent='移除'; b.onclick=()=>{draft.refs=draft.refs.filter(x=>x!==name);draft.removedRefs.push(name);cancelReviewPreviewForEdit();renderRefs();};p.append(b);$('.ka-refs').append(p); }
       draft.pendingRefs.forEach((blob,i) => {const image=document.createElement('canvas'); image.setAttribute('aria-label', `待保存参考图 ${i+1}`); createImageBitmap(blob).then(bitmap=>{image.width=bitmap.width;image.height=bitmap.height;image.getContext('2d').drawImage(bitmap,0,0);bitmap.close();}).catch(()=>{image.setAttribute('aria-label','参考图预览失败，保存时会保留原图');});$('.ka-refs').append(image);});
     }
-    function addRefs(files) { if (!draft || busy) return; for (const f of files) if(f.type.startsWith('image/')) draft.pendingRefs.push(f); renderRefs(); }
+    function addRefs(files) { if (!draft || busy) return; for (const f of files) if(f.type.startsWith('image/')) { draft.pendingRefs.push(f); cancelReviewPreviewForEdit(); } renderRefs(); }
     async function referenceImage(blob) {
       if (['image/png','image/jpeg','image/webp'].includes(blob.type)) return blob;
       const bitmap = await createImageBitmap(blob), canvas = document.createElement('canvas');
@@ -460,7 +470,10 @@
       if(type==='adopt-category' || type==='dismiss-category') {
         if (!event.isTrusted || busy || !draft || !editor.open || !categorySuggestion ||
             categorySuggestion.key !== JSON.stringify(categoryInputs())) { renderCategorySuggestion(); return; }
-        if (type === 'adopt-category') $('[name=category]').value = categorySuggestion.category;
+        if (type === 'adopt-category') {
+          $('[name=category]').value = categorySuggestion.category;
+          cancelReviewPreviewForEdit();
+        }
         else dismissedSuggestionKey = categorySuggestion.key;
         renderCategorySuggestion(); return;
       }
@@ -538,10 +551,15 @@
     });
     root.addEventListener('click',event=>{action(event).catch(e=>notice(e.message));});
     editor.addEventListener('input', event => {
-      if (['text','observed','expected','reproduction'].includes(event.target?.name)) renderCategorySuggestion();
+      const field = event.target?.name;
+      if (event.isTrusted && ['text','observed','expected','reproduction','category','status','review-proposal'].includes(field))
+        cancelReviewPreviewForEdit();
+      if (['text','observed','expected','reproduction'].includes(field)) renderCategorySuggestion();
     });
     editor.addEventListener('change', event => {
-      if (event.target?.name === 'category') renderCategorySuggestion();
+      const field = event.target?.name;
+      if (event.isTrusted && ['category','status'].includes(field)) cancelReviewPreviewForEdit();
+      if (field === 'category') renderCategorySuggestion();
     });
     $('[name=reference]').addEventListener('change',event=>addRefs(event.target.files));
     editor.addEventListener('paste',event=>{const files=[...(event.clipboardData?.items || [])].filter(x=>x.kind==='file').map(x=>x.getAsFile()).filter(Boolean);if(files.length){event.preventDefault();addRefs(files);}});

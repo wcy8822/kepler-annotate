@@ -52,7 +52,7 @@ async function save(page,text){const ui=page.locator('#kp-annotate-host');await 
  });
 
 
- await check('本地建议整理可显式取消，迟到 Provider 结果不覆盖草稿',async()=>{
+ await check('本地建议整理可显式取消或编辑时取消，迟到 Provider 结果不覆盖草稿',async()=>{
    await ui.locator('[data-edit="1"]').click();
    await ui.locator('.ka-review-state').filter({hasText:'尚未作出决定'}).waitFor();
    await worker.evaluate(()=>{
@@ -79,6 +79,33 @@ async function save(page,text){const ui=page.locator('#kp-annotate-host');await 
      await assertEventually(()=>worker.evaluate(()=>reviewPreviewRequests.size===0));
      await worker.evaluate(()=>globalThis.__reviewPreviewHold.finish());
      assert.equal(await ui.locator('[name=review-proposal]').inputValue(),'');
+     // The user may edit while the provider is still thinking. Stop on the
+     // first edit, even if the user subsequently clears or reverts that input.
+     for (const [field,value,restore] of [
+       ['text','用户正在修改原话','请将标题改为新文案'],
+       ['review-proposal','用户正在手写建议','']
+     ]) {
+       await worker.evaluate(()=>Object.assign(__reviewPreviewHold,{started:false,aborted:false,finish:null}));
+       await ui.locator('[data-action=review-local-preview]').click();
+       await assertEventually(()=>worker.evaluate(()=>globalThis.__reviewPreviewHold.started));
+       await ui.locator('[name='+field+']').fill(value);
+       await ui.locator('.ka-review-state').filter({hasText:'编辑内容已变化，已停止整理'}).waitFor();
+       await assertEventually(()=>worker.evaluate(()=>globalThis.__reviewPreviewHold.aborted));
+       await assertEventually(()=>worker.evaluate(()=>reviewPreviewRequests.size===0));
+       await ui.locator('[name='+field+']').fill(restore);
+       await worker.evaluate(()=>globalThis.__reviewPreviewHold.finish());
+       assert.equal(await ui.locator('[name=review-proposal]').inputValue(),'');
+     }
+     // A changed field with no trusted input event must still fail the
+     // final source check before the asynchronous result is inserted.
+     await worker.evaluate(()=>Object.assign(__reviewPreviewHold,{started:false,aborted:false,finish:null}));
+     await ui.locator('[data-action=review-local-preview]').click();
+     await assertEventually(()=>worker.evaluate(()=>globalThis.__reviewPreviewHold.started));
+     await ui.locator('[name=text]').evaluate(el=>{el.value='未保存的新原话';});
+     await worker.evaluate(()=>globalThis.__reviewPreviewHold.finish());
+     await ui.locator('.ka-review-state').filter({hasText:'未填入旧建议'}).waitFor();
+     assert.equal(await ui.locator('[name=review-proposal]').inputValue(),'');
+     await ui.locator('[name=text]').fill('请将标题改为新文案');
      assert.equal(await worker.evaluate(async()=>
        (await chrome.storage.local.get('kp-annotate-review-decisions-v1'))['kp-annotate-review-decisions-v1']),undefined,
        '取消整理不能留下批准事件');
