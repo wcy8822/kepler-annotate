@@ -254,3 +254,12 @@ B3d-1c 能识别保存后的图片变化使旧决定过期，但若**用户打�
 
 新增可选的 `annotation-context-v1` 源上下文规范：原始批注的 URL、页面线索、元素、矩形、形状、视口、构建版本等通过稳定 JSON 投影及 SHA-256 绑定 `contextHash`。Native 在 v2 接收及快照读回时拒绝版本化声明与原始数据不一致；旧无版本标记的审计对象不会获得新校验能力，也从未视为授权。新增合成正反例测试，保持旧 v1 兼容和评审执行门禁；未进行真实浏览器或用户手势验证。
 
+
+
+## D1c-1 本地模型配置与发送前预检（2026-11-27）
+
+新增 Native `review-model-info` / `review-model-prepare`：仅从本机配置 `reviewModel` 读取严格限定的 `kind: openai-compatible-local`、`endpoint`、`model`、`timeoutMs`、`maxOutputTokens`；仅允许 IPv4 回环字面量 `http://127.0.0.1:PORT/v1/chat/completions`（PORT 1–65535），不接受域名、远端、查询参数或凭据。超时 1000–60000 毫秒，输出上限 1–2048 tokens。未配置返回 disabled；有效配置返回 configured_unverified，**不代表模型已运行或可达**。现有 info、项目同步和合成能力不变。
+
+预检仅接受四个文本字段及调用方给出的 H1 格式摘要，生成可供后续明确确认的 OpenAI-compatible JSON 请求正文（不包含 tools），以 SHA-256 绑定目的地、超时、正文和 sourceHash。拒绝未知字段、超长与非法编码；不读取图片、URL、DOM 或凭据，不发 HTTP、不写状态、不启动模型。摘要仅为发送前内容绑定，不证明 H1 真实来源或用户批准；networkEnabled 始终 false。未来实际发送须由独立可信用户确认与来源复核控制，并禁止代理/重定向，不能将本回执当作批准。原编辑器尚未接线，仍使用 local-template；v1、精确 revision、SOURCE_VALIDATION_PENDING、executable:false 和 v2 send 禁用均不变。
+
+验证：隔离预检函数五组烟测通过；新增 Native Host 回归覆盖默认关闭、配置与内容变化、未知字段、无落盘/无 Codex 调用。完整仓库 CI 及真实设备、模型可达性和授权发送尚待验证。未合并、发布或安装。

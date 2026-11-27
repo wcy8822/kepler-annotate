@@ -106,6 +106,53 @@ print("queued")
         return self.host.handle(copy.deepcopy(data))
 
 
+    def test_review_model_preflight_is_local_and_non_executing(self):
+        config = {"kind": "openai-compatible-local",
+                  "endpoint": "http://127.0.0.1:8080/v1/chat/completions",
+                  "model": "example-model", "timeoutMs": 5000, "maxOutputTokens": 512}
+        request = {"op": "review-model-prepare", "sourceHash": "a" * 64,
+                   "annotation": {"text": "标题遮挡", "observed": "",
+                                  "expected": "完整显示", "reproduction": ""}}
+        self.assertEqual(self.invoke({"op": "review-model-info"})["status"], "disabled")
+        self.host = self.module.Host(dict(self.config, reviewModel=config))
+        info = self.invoke({"op": "review-model-info"})
+        self.assertEqual(info["status"], "configured_unverified")
+        self.assertFalse(info["networkEnabled"])
+        self.assertTrue(info["requiresConsent"])
+        self.assertEqual(self.invoke({"op": "info"})["capabilities"], CAPABILITIES)
+        preview = self.invoke(request)
+        self.assertTrue(preview["ok"], preview)
+        body = json.loads(preview["body"])
+        self.assertEqual(json.loads(body["messages"][1]["content"]), request["annotation"])
+        self.assertEqual(body["model"], config["model"])
+        self.assertFalse(body["stream"])
+        self.assertNotIn("tools", body)
+        self.assertEqual(self.invoke(request)["requestDigest"], preview["requestDigest"])
+        for changed in (dict(request, sourceHash="b" * 64),
+                        dict(request, annotation=dict(request["annotation"], text="修改"))):
+            self.assertNotEqual(self.invoke(changed)["requestDigest"], preview["requestDigest"])
+        for changed in (dict(config, model="other"),
+                        dict(config, endpoint="http://127.0.0.1:8081/v1/chat/completions"),
+                        dict(config, timeoutMs=6000), dict(config, maxOutputTokens=600)):
+            self.host = self.module.Host(dict(self.config, reviewModel=changed))
+            self.assertNotEqual(self.invoke(request)["requestDigest"], preview["requestDigest"])
+        self.host = self.module.Host(dict(self.config, reviewModel=config))
+        for invalid in (dict(request, approved=True), dict(request, sourceHash="x"),
+                        dict(request, annotation=dict(request["annotation"], url="example")),
+                        dict(request, annotation=dict(request["annotation"], text="😀" * 2001)),
+                        dict(request, annotation=dict(request["annotation"], text="\ud800"))):
+            self.assertEqual(self.invoke(invalid)["code"], "REVIEW_MODEL_INPUT_INVALID")
+        for invalid in (dict(config, endpoint="https://example.invalid/v1/chat/completions"),
+                        dict(config, endpoint="http://localhost:8080/v1/chat/completions"),
+                        dict(config, endpoint="http://127.0.0.1:65536/v1/chat/completions"),
+                        dict(config, endpoint=config["endpoint"] + "?x=y"),
+                        dict(config, apiKey="dummy"), dict(config, timeoutMs=True)):
+            self.host = self.module.Host(dict(self.config, reviewModel=invalid))
+            self.assertEqual(self.invoke(request)["code"], "REVIEW_MODEL_CONFIG_INVALID")
+            self.assertTrue(self.invoke({"op": "info"})["ok"])
+        self.assertFalse(Path(self.config["dataRoot"]).exists())
+        self.assertEqual(self.calls(), [])
+
     def test_synthetic_preview_requires_explicit_test_host_opt_in(self):
         request_id = str(uuid.uuid4())
         request = {"op": "review-preview-request", "requestId": request_id,
