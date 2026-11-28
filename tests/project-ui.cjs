@@ -119,6 +119,44 @@ async function save(page,text){const ui=page.locator('#kp-annotate-host');await 
    }
  });
 
+ await check('原编辑器显式检查模型配置，不发送批注、不暴露主机配置或写入决定',async()=>{
+   await ui.locator('[data-edit="1"]').click();
+   await ui.locator('.ka-review-state').filter({hasText:'尚未作出决定'}).waitFor();
+   await ui.locator('[name=review-proposal]').fill('人工建议保持原样');
+   await worker.evaluate(()=>{
+     globalThis.__modelOriginalSend=chrome.runtime.sendNativeMessage;
+     globalThis.__modelChecks=[];
+     globalThis.__modelStatus='disabled';
+     chrome.runtime.sendNativeMessage=async(host,m)=>{
+       if(m.op!=='review-model-info')return __modelOriginalSend(host,m);
+       __modelChecks.push(m);
+       if(__modelStatus==='invalid')return {ok:true,status:'configured_unverified',networkEnabled:true};
+       if(__modelStatus==='disabled')return {ok:true,status:'disabled',networkEnabled:false};
+       return {ok:true,status:'configured_unverified',networkEnabled:false,requiresConsent:true,dataScope:'text-only',model:'fixture-model-name'};
+     };
+   });
+   try{
+     const button=ui.locator('[data-action=review-model-check]');
+     await button.evaluate(el=>el.click());
+     assert.deepEqual(await worker.evaluate(()=>__modelChecks),[]);
+     await button.click();
+     await ui.locator('.ka-review-state').filter({hasText:'尚未配置本地模型'}).waitFor();
+     await worker.evaluate(()=>{__modelStatus='configured';});
+     await button.click();
+     await ui.locator('.ka-review-state').filter({hasText:'可达性未验证'}).waitFor();
+     assert(!((await ui.locator('.ka-review-state').textContent()).includes('fixture-model-name')));
+     assert.equal(await ui.locator('[name=review-proposal]').inputValue(),'人工建议保持原样');
+     await worker.evaluate(()=>{__modelStatus='invalid';});
+     await button.click();
+     await ui.locator('.ka-review-state').filter({hasText:'模型能力声明无效'}).waitFor();
+     assert.deepEqual(await worker.evaluate(()=>__modelChecks),Array(3).fill({op:'review-model-info'}));
+     assert.equal(await worker.evaluate(async()=>(await chrome.storage.local.get('kp-annotate-review-decisions-v1'))['kp-annotate-review-decisions-v1']),undefined);
+   }finally{
+     await worker.evaluate(()=>{chrome.runtime.sendNativeMessage=__modelOriginalSend;delete globalThis.__modelOriginalSend;delete globalThis.__modelChecks;delete globalThis.__modelStatus;});
+     await ui.locator('[data-action=cancel]').click();
+   }
+ });
+
  await check('人工决定在原编辑器生成本地历史，拒绝脚本点击且不改 v1 原话',async()=>{
   await ui.locator('[data-edit="1"]').click();
   await ui.locator('.ka-review-draft').waitFor({state:'visible'});

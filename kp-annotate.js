@@ -26,7 +26,7 @@
         <h2>写批注</h2><p class="ka-target"></p><label>类别<select name="category"><option>视觉</option><option>文案</option><option>交互</option><option>产品逻辑</option><option>反馈/建议</option></select></label><label>处理状态<select name="status"><option>未处理</option><option>处理中</option><option>待验收</option><option>已完成</option></select></label>
         <label>一句话说明<textarea name="text" rows="4" required maxlength="4000" placeholder="希望改成什么样？"></textarea></label>
         <section class="ka-category-suggestion" hidden aria-label="本地类别建议"><strong></strong><p class="ka-category-reason"></p><div><button type="button" data-action="adopt-category">采用此类别</button><button type="button" data-action="dismiss-category">仅保留当前分类</button></div></section>
-        <section class="ka-review-draft" hidden aria-label="建议草稿与人工决定"><h3>建议草稿 · 仅存本机</h3><p>尚未接入模型。建议可编辑；采纳、拒绝或撤回只记入本地历史，不修改原话、不授权 AI 开发执行。</p><label>待评审建议<textarea name="review-proposal" rows="3" maxlength="3000" placeholder="在此填写或编辑候选建议"></textarea></label><button type="button" data-action="review-local-preview">根据已保存批注整理草稿（本地）</button><button type="button" data-action="review-preview-cancel" hidden>停止整理</button><small>仅引用已保存的原话、观察、预期和复现；不发送网页或图片，不调用模型，不覆盖人工草稿。</small><p class="ka-review-state" role="status"></p><div class="ka-review-actions"><button type="button" data-action="review-adopt" hidden>采纳草稿</button><button type="button" data-action="review-reject" hidden>拒绝草稿，仅保留原话</button><button type="button" data-action="review-reconfirm" hidden>重新确认</button><button type="button" data-action="review-withdraw" hidden>撤回采纳</button></div></section>
+        <section class="ka-review-draft" hidden aria-label="建议草稿与人工决定"><h3>建议草稿 · 仅存本机</h3><p>尚未接入模型。建议可编辑；采纳、拒绝或撤回只记入本地历史，不修改原话、不授权 AI 开发执行。</p><label>待评审建议<textarea name="review-proposal" rows="3" maxlength="3000" placeholder="在此填写或编辑候选建议"></textarea></label><button type="button" data-action="review-local-preview">根据已保存批注整理草稿（本地）</button><button type="button" data-action="review-model-check">检查本地模型配置</button><button type="button" data-action="review-preview-cancel" hidden>停止整理</button><small>仅引用已保存的原话、观察、预期和复现；不发送网页或图片，不调用模型，不覆盖人工草稿。</small><p class="ka-review-state" role="status"></p><div class="ka-review-actions"><button type="button" data-action="review-adopt" hidden>采纳草稿</button><button type="button" data-action="review-reject" hidden>拒绝草稿，仅保留原话</button><button type="button" data-action="review-reconfirm" hidden>重新确认</button><button type="button" data-action="review-withdraw" hidden>撤回采纳</button></div></section>
         <details><summary>补充观察、预期与复现（选填）</summary><label>实际看到什么<textarea name="observed" rows="2" maxlength="4000"></textarea></label><label>希望怎样<textarea name="expected" rows="2" maxlength="4000"></textarea></label><label>如何复现<textarea name="reproduction" rows="2" maxlength="4000"></textarea></label></details><label>参考图 · Ctrl+V / ⌘V 粘贴，或选择图片<input type="file" name="reference" accept="image/*" multiple></label><div class="ka-refs"></div>
         <p class="ka-editor-status" role="status"></p><footer><button type="button" data-action="cancel">取消</button><button type="button" data-action="save">保存批注</button></footer>
       </form></dialog><dialog class="ka-manager" aria-label="批次管理"><form><h2></h2><p class="ka-management-hint"></p><label>名称<input name="management-name" maxlength="80" required></label><p role="status"></p><footer><button type="button" data-action="manage-cancel">取消</button><button type="submit">确定</button></footer></form></dialog><div class="ka-status" role="status" data-html2canvas-ignore="true"></div>`;
@@ -258,22 +258,29 @@
     function cancelReviewPreviewForEdit() {
       cancelReviewPreview('编辑内容已变化，已停止整理；不会覆盖你的草稿。');
     }
-    async function prepareLocalReviewPreview() {
+    async function prepareLocalReviewPreview(modelCheck = false) {
       if (reviewLoading || busy || !reviewStatus || !draft?.existing || !editor.open) return;
       if (reviewAnnotationEdited()) throw Error('原批注有未保存的修改，请先保存并重新打开');
       const field = $('[name=review-proposal]');
-      if (field.value !== '') { showReviewStatus('已有建议草稿，未覆盖；如需重新整理，请先自行清空草稿。'); return; }
+      if (!modelCheck && field.value !== '') { showReviewStatus('已有建议草稿，未覆盖；如需重新整理，请先自行清空草稿。'); return; }
       const id = draft.id, batchId = draft.batchId, generation = ++reviewGeneration, requestId = crypto.randomUUID();
       const expected = storedSnapshot, expectedSourceHash = reviewStatus.sourceHash;
       activeReviewPreview = requestId;
-      reviewLoading = true; showReviewStatus('正在本地整理已保存批注…');
+      reviewLoading = true; showReviewStatus(modelCheck ? '正在检查本地模型配置…' : '正在本地整理已保存批注…');
       let message = '';
       try {
-        const result = await store.rpc('review-local-preview', {expected,itemId:id,expectedSourceHash,requestId});
+        const result = await store.rpc(modelCheck ? 'review-model-check' : 'review-local-preview', {expected,itemId:id,expectedSourceHash,requestId});
         if (generation !== reviewGeneration || !editor.open || !draft || draft.id !== id || draft.batchId !== batchId) return;
-        if (field.value !== '' || reviewAnnotationEdited() || storedSnapshot !== expected ||
+        if ((!modelCheck && field.value !== '') || reviewAnnotationEdited() || storedSnapshot !== expected ||
             reviewStatus?.sourceHash !== expectedSourceHash) {
           message = '编辑内容或来源已变化，未填入旧建议；请保存原批注后重新整理。';
+          return;
+        }
+        if (modelCheck) {
+          if (result.sourceHash !== expectedSourceHash || result.networkEnabled !== false ||
+              !['disabled','configured_unverified'].includes(result.status)) throw Error('模型能力声明无效');
+          message = result.status === 'disabled' ? '尚未配置本地模型；仍可使用本地草稿整理。' :
+            '已配置本地模型，但可达性未验证；当前未发送批注或调用模型。';
           return;
         }
         if (result.origin !== 'local-template' || result.readOnly !== true || result.sourceHash !== expectedSourceHash ||
@@ -283,7 +290,7 @@
           '已放入可编辑的本地草稿；原批注未填写预期，请先确认，未调用模型。' :
           '已放入可编辑的本地草稿，未调用模型；需另外点击采纳或拒绝。';
       } catch (error) {
-        message = '本地整理失败：' + error.message;
+        message = (modelCheck ? '模型配置检查失败：' : '本地整理失败：') + error.message;
       } finally {
         if (activeReviewPreview === requestId) activeReviewPreview = null;
         if (generation === reviewGeneration) { reviewLoading = false; showReviewStatus(message); }
@@ -477,7 +484,7 @@
         else dismissedSuggestionKey = categorySuggestion.key;
         renderCategorySuggestion(); return;
       }
-      if (type === 'review-local-preview') { await prepareLocalReviewPreview(); return; }
+      if (type === 'review-local-preview' || type === 'review-model-check') { await prepareLocalReviewPreview(type === 'review-model-check'); return; }
       if (type === 'review-preview-cancel') { cancelReviewPreview(); return; }
       if (['review-adopt','review-reject','review-reconfirm','review-withdraw'].includes(type)) { await recordReviewAction(type.slice(7)); return; }
       if(type==='list')toggleList();
