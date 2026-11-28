@@ -36,6 +36,14 @@ python3 kepler-annotations.py read --project PROJECT_ID --batch BATCH_ID --since
 
 截图、参考图必须逐项查看。CLI 查询的 `evidence` 图片路径会解析为本地快照路径；ZIP 中则相对批次目录。公开汇报时保留可追溯关系并对路径和内容脱敏。
 
+#### 实验性 v2 任务
+
+当前浏览器与 ZIP 继续生成 v1。含评审决定的 v2 项目快照要求消费方显式识别新语义：`read` 和 `result` 都须附加 `--accept-task-contract 2`；缺少时返回 `TASK_CONTRACT_ACK_REQUIRED`，不静默退回原话执行。`read --since` 涉及 v2 历史时也需要此参数。
+
+这个参数只确认消费程序理解格式，不是用户批准。先检查每项 `reviewGate`：当前含 `approvedReview` 的条目均为 `executable: false`、`code: SOURCE_VALIDATION_PENDING`，即使正文的 `state` 是 `approved` 也不能据此开发或宣称完成。保留原话、规格与图片，记录待确认原因；可以登记“待确认”或“处理中”，但主机会拒绝这些条目的“待验收”和“无需修改”。纯 v1 与混合批次中不含评审的条目继续使用原执行规则。
+
+v2 暂不支持“发送到 Codex”，该路径返回 `TASK_CONTRACT_UNSUPPORTED_FOR_SEND`。先完成来源绑定、浏览器确认流程和相应测试，再开放执行。字段、错误码及实现边界见 [评审任务契约](AI-REVIEW-CONTRACT.md)。
+
 ### 3. ZIP 交接也保留相同语义
 
 先读包内 `AI-README.md`，再读 `ai-tasks.json`、`annotations.md`，按需核对 `annotations.json` 与图片。ZIP v1 的 `schemaVersion` 为 `1`，包含当前批次全部条目，清单筛选不会改变导出范围。

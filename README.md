@@ -165,6 +165,8 @@ ZIP v1 含 `annotations.json`（`schemaVersion: 1`）、`annotations.md`、`ai-t
 
 ## 开发与检查
 
+V1.5 的 AI 前端评审正在按独立改动推进，路线与状态见 [AI 评审迭代计划](docs/AI-REVIEW-V1.5.md)，实验性任务格式见 [评审任务契约](docs/AI-REVIEW-CONTRACT.md)。当前浏览器仍生成 v1 任务，尚无圈选时即时 AI 建议。新增 v2 的结构化保存与读取保护不代表已支持模型调用或已验证用户批准来源，版本仍为 v1.4.0。
+
 开发需要 Node.js 22 及以上、Python 3 和 Git；CI 使用 Python 3.12。运行已有检查：
 
 ```sh

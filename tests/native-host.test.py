@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 from unittest.mock import patch
 
 sys.dont_write_bytecode = True
@@ -21,6 +22,9 @@ SOURCE = Path(__file__).resolve().parents[1]
 EXTENSION = "abcdefghijklmnopabcdefghijklmnop"
 THREAD = "00000000-0000-4000-8000-000000000001"
 OTHER_THREAD = "00000000-0000-4000-8000-000000000002"
+CAPABILITIES = {"taskContracts": [1, 2], "reviewTaskValidation": "structure_and_evidence",
+                "sourceBindingValidation": False, "reviewExecution": False,
+                "reviewPreviewLifecycle": "synthetic_fixture_only"}
 PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jf1sAAAAASUVORK5CYII=")
 DATA = "data:image/png;base64," + base64.b64encode(PNG).decode()
 
@@ -91,7 +95,8 @@ print("queued")
         self.module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.module)
         self.config = {"codexPath": str(self.fake), "defaultThread": THREAD,
-                       "dataRoot": str(self.root / "handoffs")}
+                       "dataRoot": str(self.root / "handoffs"),
+                       "enableSyntheticReviewFixture": True}
         self.host = self.module.Host(self.config)
 
     def calls(self):
@@ -100,13 +105,227 @@ print("queued")
     def invoke(self, data):
         return self.host.handle(copy.deepcopy(data))
 
+
+    def test_review_model_preflight_is_local_and_non_executing(self):
+        config = {"kind": "openai-compatible-local",
+                  "endpoint": "http://127.0.0.1:8080/v1/chat/completions",
+                  "model": "example-model", "timeoutMs": 5000, "maxOutputTokens": 512}
+        request = {"op": "review-model-prepare", "sourceHash": "a" * 64,
+                   "annotation": {"text": "标题遮挡", "observed": "",
+                                  "expected": "完整显示", "reproduction": ""}}
+        self.assertEqual(self.invoke({"op": "review-model-info"})["status"], "disabled")
+        self.host = self.module.Host(dict(self.config, reviewModel=config))
+        info = self.invoke({"op": "review-model-info"})
+        self.assertEqual(info["status"], "configured_unverified")
+        self.assertFalse(info["networkEnabled"])
+        self.assertTrue(info["requiresConsent"])
+        self.assertEqual(self.invoke({"op": "info"})["capabilities"], CAPABILITIES)
+        preview = self.invoke(request)
+        self.assertTrue(preview["ok"], preview)
+        body = json.loads(preview["body"])
+        self.assertEqual(json.loads(body["messages"][1]["content"]), request["annotation"])
+        self.assertEqual(body["model"], config["model"])
+        self.assertFalse(body["stream"])
+        self.assertNotIn("tools", body)
+        self.assertEqual(self.invoke(request)["requestDigest"], preview["requestDigest"])
+        for changed in (dict(request, sourceHash="b" * 64),
+                        dict(request, annotation=dict(request["annotation"], text="修改"))):
+            self.assertNotEqual(self.invoke(changed)["requestDigest"], preview["requestDigest"])
+        for changed in (dict(config, model="other"),
+                        dict(config, endpoint="http://127.0.0.1:8081/v1/chat/completions"),
+                        dict(config, timeoutMs=6000), dict(config, maxOutputTokens=600)):
+            self.host = self.module.Host(dict(self.config, reviewModel=changed))
+            self.assertNotEqual(self.invoke(request)["requestDigest"], preview["requestDigest"])
+        self.host = self.module.Host(dict(self.config, reviewModel=config))
+        for invalid in (dict(request, approved=True), dict(request, sourceHash="x"),
+                        dict(request, annotation=dict(request["annotation"], url="example")),
+                        dict(request, annotation=dict(request["annotation"], text="😀" * 2001)),
+                        dict(request, annotation=dict(request["annotation"], text="\ud800"))):
+            self.assertEqual(self.invoke(invalid)["code"], "REVIEW_MODEL_INPUT_INVALID")
+        for invalid in (dict(config, endpoint="https://example.invalid/v1/chat/completions"),
+                        dict(config, endpoint="http://localhost:8080/v1/chat/completions"),
+                        dict(config, endpoint="http://127.0.0.1:65536/v1/chat/completions"),
+                        dict(config, endpoint=config["endpoint"] + "?x=y"),
+                        dict(config, apiKey="dummy"), dict(config, timeoutMs=True)):
+            self.host = self.module.Host(dict(self.config, reviewModel=invalid))
+            self.assertEqual(self.invoke(request)["code"], "REVIEW_MODEL_CONFIG_INVALID")
+            self.assertTrue(self.invoke({"op": "info"})["ok"])
+        self.assertFalse(Path(self.config["dataRoot"]).exists())
+        self.assertEqual(self.calls(), [])
+
+    def test_synthetic_preview_requires_explicit_test_host_opt_in(self):
+        request_id = str(uuid.uuid4())
+        request = {"op": "review-preview-request", "requestId": request_id,
+                   "provider": "synthetic-fixture", "synthetic": True, "sourceHash": "e" * 64}
+        self.assertEqual(self.invoke(request)["state"], "queued")
+        ledger = self.root / "handoffs" / "review-preview-jobs.json"
+        saved = ledger.read_bytes()
+
+        # Production installer does not include the test-only flag.
+        production_config = {key: value for key, value in self.config.items()
+                             if key != "enableSyntheticReviewFixture"}
+        self.host = self.module.Host(production_config)
+        self.assertEqual(self.invoke({"op": "info"})["capabilities"]["reviewPreviewLifecycle"], "disabled")
+        for op_request in (request,
+                           {"op": "review-preview-status", "requestId": request_id},
+                           {"op": "review-preview-cancel", "requestId": request_id},
+                           dict(request, op="review-preview-fixture-complete")):
+            with self.subTest(op=op_request["op"]):
+                response = self.invoke(op_request)
+                self.assertFalse(response["ok"])
+                self.assertEqual(response["code"], "REVIEW_PROVIDER_NOT_CONFIGURED")
+        self.assertEqual(ledger.read_bytes(), saved)
+
+        # A string is not an explicit boolean opt-in.
+        self.host = self.module.Host(dict(self.config, enableSyntheticReviewFixture="true"))
+        self.assertEqual(self.invoke({"op": "review-preview-status", "requestId": request_id})["code"],
+                         "REVIEW_PROVIDER_NOT_CONFIGURED")
+        self.assertEqual(ledger.read_bytes(), saved)
+
+    def test_synthetic_worker_process_handles_only_live_queued_fixtures(self):
+        command = [sys.executable, str(SOURCE / "native-host.py"),
+                   "--synthetic-review-worker-once"]
+        config_path = self.root / "worker-config.json"
+        config_path.write_text(json.dumps(self.config))
+        environment = dict(os.environ, KEPLER_ANNOTATE_CONFIG=str(config_path))
+
+        def worker():
+            result = subprocess.run(command, env=environment, capture_output=True,
+                                    text=True, timeout=10)
+            return result.returncode, json.loads(result.stdout)
+
+        requests = [{"op": "review-preview-request", "requestId": str(uuid.uuid4()),
+                     "provider": "synthetic-fixture", "synthetic": True,
+                     "sourceHash": "f" * 64} for _ in range(4)]
+        for request in requests:
+            self.assertEqual(self.invoke(request)["state"], "queued")
+        ids = [request["requestId"] for request in requests]
+        self.assertTrue(self.invoke({"op": "review-preview-cancel", "requestId": ids[2]})["cancelled"])
+        ledger = self.root / "handoffs" / "review-preview-jobs.json"
+        entries = json.loads(ledger.read_text())
+        entries["requests"][ids[3]]["createdAt"] = 0
+        ledger.write_text(json.dumps(entries))
+
+        # Neither a production configuration nor a browser message can run the worker.
+        before = ledger.read_bytes()
+        config_path.write_text(json.dumps(dict(self.config, enableSyntheticReviewFixture=False)))
+        code, response = worker()
+        self.assertEqual(code, 1)
+        self.assertEqual(response["code"], "REVIEW_PROVIDER_NOT_CONFIGURED")
+        self.assertFalse(self.invoke({"op": "review-preview-fixture-work-once"})["ok"])
+        self.assertEqual(ledger.read_bytes(), before)
+        config_path.write_text(json.dumps(self.config))
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(lambda _: worker(), range(2)))
+        self.assertEqual([code for code, _ in responses], [0, 0])
+        self.assertTrue(all(reply["processed"] and reply["synthetic"] for _, reply in responses))
+        self.assertEqual({reply["requestId"] for _, reply in responses}, set(ids[:2]))
+        self.assertEqual(worker(), (0, {"ok": True, "synthetic": True,
+                                       "processed": False, "requestId": None}))
+        for request_id in ids[:2]:
+            status = self.invoke({"op": "review-preview-status", "requestId": request_id})
+            self.assertEqual(status["state"], "completed")
+            self.assertEqual(status["candidate"]["origin"], "native-fixture")
+        self.assertEqual(self.invoke({"op": "review-preview-status", "requestId": ids[2]})["state"],
+                         "cancelled")
+        self.assertEqual(self.invoke({"op": "review-preview-status", "requestId": ids[3]})["code"],
+                         "REVIEW_PREVIEW_NOT_FOUND")
+        self.assertEqual(self.calls(), [])
+
+    def test_synthetic_preview_lifecycle_survives_native_process_restart(self):
+        request_id = str(uuid.uuid4())
+        request = {"op": "review-preview-request", "requestId": request_id,
+                   "provider": "synthetic-fixture", "synthetic": True, "sourceHash": "a" * 64}
+        finish = dict(request, op="review-preview-fixture-complete")
+        first = self.invoke(request)
+        self.assertEqual((first["state"], first["duplicate"], first["synthetic"]), ("queued", False, True))
+        self.host = self.module.Host(self.config)  # sendNativeMessage launches another process
+        again = self.invoke(request)
+        self.assertEqual((again["state"], again["duplicate"]), ("queued", True))
+        waiting = self.invoke({"op": "review-preview-status", "requestId": request_id})
+        self.assertEqual(waiting["state"], "queued")  # status is strictly read-only
+        self.assertNotIn("candidate", waiting)
+        self.assertEqual(self.invoke({"op": "review-preview-status", "requestId": request_id}), waiting)
+        self.assertTrue(self.invoke(finish)["completed"])
+        self.assertFalse(self.invoke(finish)["completed"])
+        status = self.invoke({"op": "review-preview-status", "requestId": request_id})
+        self.assertEqual(status["state"], "completed")
+        self.assertEqual(status["candidate"]["origin"], "native-fixture")
+        self.assertEqual(status["candidate"]["sourceHash"], "a" * 64)
+        self.assertIn("合成测试", status["candidate"]["proposal"])
+        self.assertEqual(self.invoke({"op": "review-preview-status", "requestId": request_id}), status)
+        self.assertFalse(self.invoke({"op": "review-preview-cancel", "requestId": request_id})["cancelled"])
+        self.assertEqual(self.calls(), [])
+        ledger = self.root / "handoffs" / "review-preview-jobs.json"
+        self.assertEqual(stat.S_IMODE(ledger.stat().st_mode), 0o600)
+        saved = ledger.read_text()
+        self.assertNotIn("proposal", saved)
+        self.assertNotIn("批注", saved)
+
+        other_id = str(uuid.uuid4())
+        other = dict(request, requestId=other_id)
+        self.assertEqual(self.invoke(other)["state"], "queued")
+        cancelled = self.invoke({"op": "review-preview-cancel", "requestId": other_id})
+        self.assertTrue(cancelled["cancelled"])
+        self.assertEqual(self.invoke({"op": "review-preview-status", "requestId": other_id})["state"], "cancelled")
+        self.assertFalse(self.invoke(dict(finish, requestId=other_id))["completed"])
+        self.assertNotIn("candidate", self.invoke({"op": "review-preview-status", "requestId": other_id}))
+
+    def test_synthetic_preview_fixture_completion_cancel_race(self):
+        request_id = str(uuid.uuid4())
+        request = {"op": "review-preview-request", "requestId": request_id,
+                   "provider": "synthetic-fixture", "synthetic": True, "sourceHash": "d" * 64}
+        self.assertEqual(self.invoke(request)["state"], "queued")
+        finish = dict(request, op="review-preview-fixture-complete")
+        cancel = {"op": "review-preview-cancel", "requestId": request_id}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            future_finish = pool.submit(self.invoke, finish)
+            future_cancel = pool.submit(self.invoke, cancel)
+            finished, cancelled = future_finish.result(), future_cancel.result()
+        self.assertEqual(int(finished["completed"]) + int(cancelled["cancelled"]), 1)
+        state = self.invoke({"op": "review-preview-status", "requestId": request_id})
+        self.assertEqual(state["state"], "completed" if finished["completed"] else "cancelled")
+        self.assertEqual("candidate" in state, finished["completed"])
+
+    def test_synthetic_preview_rejects_real_provider_payload_replay_and_corrupt_store(self):
+        request_id = str(uuid.uuid4())
+        base = {"op": "review-preview-request", "requestId": request_id,
+                "provider": "synthetic-fixture", "synthetic": True, "sourceHash": "b" * 64}
+        for patch_values, expected in [
+            ({"provider": "cloud"}, "REVIEW_PROVIDER_NOT_CONFIGURED"),
+            ({"synthetic": False}, "REVIEW_PROVIDER_NOT_CONFIGURED"),
+            ({"sourceHash": "not-a-hash"}, "REVIEW_PREVIEW_INVALID"),
+            ({"requestId": request_id.upper()}, "REVIEW_PREVIEW_INVALID"),
+            ({"annotation": {"text": "untrusted"}}, "REVIEW_PREVIEW_INVALID"),
+        ]:
+            self.assertEqual(self.invoke(dict(base, **patch_values))["code"], expected)
+        self.assertEqual(self.invoke(base)["state"], "queued")
+        self.assertEqual(self.invoke(dict(base, sourceHash="c" * 64))["code"], "REVIEW_PREVIEW_CONFLICT")
+        finish = dict(base, op="review-preview-fixture-complete")
+        self.assertEqual(self.invoke(dict(finish, sourceHash="c" * 64))["code"], "REVIEW_PREVIEW_CONFLICT")
+        self.assertEqual(self.invoke(dict(finish, synthetic=False))["code"], "REVIEW_PROVIDER_NOT_CONFIGURED")
+        self.assertEqual(self.invoke(dict(finish, extra="untrusted"))["code"], "REVIEW_PREVIEW_INVALID")
+        self.assertEqual(self.invoke({"op": "review-preview-status", "requestId": request_id})["state"], "queued")
+        self.assertEqual(self.invoke({"op": "review-preview-status", "requestId": str(uuid.uuid4())})["code"],
+                         "REVIEW_PREVIEW_NOT_FOUND")
+        self.assertEqual(self.invoke({"op": "review-preview-cancel", "requestId": request_id, "text": "x"})["code"],
+                         "REVIEW_PREVIEW_INVALID")
+        ledger = self.root / "handoffs" / "review-preview-jobs.json"
+        ledger.write_text('{"schemaVersion":1,"requests":{"invalid":{}}}')
+        self.assertEqual(self.invoke({"op": "review-preview-status", "requestId": request_id})["code"],
+                         "REVIEW_PREVIEW_STORAGE_INVALID")
+        ledger.unlink()
+        ledger.symlink_to(self.root / "fake-codex.jsonl")
+        self.assertFalse(self.invoke({"op": "review-preview-status", "requestId": request_id})["ok"])
+
     def test_info_and_default_thread(self):
-        self.assertEqual(self.invoke({"op": "info"}), {"ok": True, "defaultThread": THREAD})
+        self.assertEqual(self.invoke({"op": "info"}), {"ok": True, "defaultThread": THREAD, "capabilities": CAPABILITIES})
         data = payload()
         del data["threadId"]
         self.assertEqual(self.invoke(data)["threadId"], THREAD)
         self.host = self.module.Host(dict(self.config, defaultThread=None))
-        self.assertEqual(self.invoke({"op": "info"}), {"ok": True, "defaultThread": None})
+        self.assertEqual(self.invoke({"op": "info"}), {"ok": True, "defaultThread": None, "capabilities": CAPABILITIES})
         explicit = payload()
         explicit["threadId"] = OTHER_THREAD
         queued = self.invoke(explicit)
@@ -294,7 +513,7 @@ print("queued")
     def test_info_uses_installed_thread_and_does_not_write_data(self):
         with patch.dict(os.environ, {"CODEX_THREAD_ID": OTHER_THREAD}):
             result = self.invoke({"op": "info"})
-        self.assertEqual(result, {"ok": True, "defaultThread": THREAD})
+        self.assertEqual(result, {"ok": True, "defaultThread": THREAD, "capabilities": CAPABILITIES})
         self.assertFalse(Path(self.config["dataRoot"]).exists())
 
     def test_installer_preserves_existing_application_support_permissions(self):
@@ -365,7 +584,7 @@ print("queued")
         replies = frames(output.getvalue())
         self.assertEqual(len(replies), 3)
         self.assertFalse(replies[0]["ok"])
-        self.assertEqual(replies[1], {"ok": True, "defaultThread": THREAD})
+        self.assertEqual(replies[1], {"ok": True, "defaultThread": THREAD, "capabilities": CAPABILITIES})
         self.assertEqual(replies[2]["state"], "queued")
 
     def test_truncated_and_oversized_frames(self):
@@ -429,7 +648,9 @@ print("queued")
         cli = subprocess.run([str(source / "native-host-launcher"), "chrome-extension://" + "a" * 32 + "/"], input=frame({"op": "info"}) + frame(payload()), capture_output=True, env=environment)
         self.assertEqual(cli.returncode, 0, cli.stderr)
         replies = frames(cli.stdout)
-        self.assertEqual(replies[0], {"ok": True, "defaultThread": OTHER_THREAD})
+        installed_capabilities = dict(CAPABILITIES, reviewPreviewLifecycle="disabled")
+        self.assertEqual(replies[0], {"ok": True, "defaultThread": OTHER_THREAD,
+                                      "capabilities": installed_capabilities})
         self.assertTrue(replies[1]["ok"], replies)
         self.assertEqual(self.calls()[0][2], THREAD)
 

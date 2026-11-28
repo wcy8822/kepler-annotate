@@ -187,6 +187,28 @@
     return imagePath(path).split('/').map(part => encodeURIComponent(part).replace(/[!'()*]/g, ch => '%' + ch.charCodeAt(0).toString(16))).join('/');
   }
 
+
+  // This is an optional, offline candidate. It never changes category or creates an approval.
+  function suggestCategory(input) {
+    if (!input || typeof input !== 'object') return null;
+    const text = ['text', 'observed', 'expected', 'reproduction']
+      .map(field => typeof input[field] === 'string' ? input[field] : '')
+      .join(' ').slice(0, 12000).toLowerCase();
+    if (!text.trim()) return null;
+    const rules = [
+      ['视觉', ['对齐', '间距', '配色', '颜色', '字号', '行高', '排版', '阴影', '边框', '布局', '重叠', '裁切']],
+      ['文案', ['错别字', '文案', '翻译', '措辞', '标点', '标题文字', '文字错误', '文本错误']],
+      ['交互', ['点不动', '无法点击', '点击无效', '点击后', '无法关闭', '弹窗', '跳转', '交互', '无法选择', '滚动失效']],
+      ['产品逻辑', ['业务规则', '业务逻辑', '状态流转', '权限', '条件判断', '校验', '排序错误', '计算错误', '流程']],
+      ['反馈/建议', ['建议增加', '建议新增', '希望新增', '考虑增加', '希望支持', '可以支持']]
+    ];
+    const matches = rules.map(([category, words]) => ({category, hits: words.filter(word => text.includes(word))}));
+    const candidates = matches.filter(rule => rule.hits.length > 0);
+    if (candidates.length !== 1) return null; // No guess if evidence is missing or ambiguous.
+    const winner = candidates[0];
+    return {category: winner.category, reason: '识别到“' + winner.hits[0] + '”', source: 'local-rule'};
+  }
+
   function aiTasks(batch) {
     const snapshot = JSON.parse(JSON.stringify(validateBatch(batch)));
     const filled = value => typeof value === 'string' && value.trim() ? value : null;
@@ -274,5 +296,5 @@
     return zip.generateAsync({ type: 'blob' });
   }
 
-  return { initialize, getCatalog, manage, subscribe, rpc, fromDataURL, STORAGE_KEY, rawSnapshot, assertUnchanged, withBatchLock, selectorFor, describe, pageKey, load, save, putAsset, getAsset, deleteAsset, clearAssets, aiTasks, markdown, buildZip };
+  return { initialize, getCatalog, manage, subscribe, rpc, fromDataURL, STORAGE_KEY, rawSnapshot, assertUnchanged, withBatchLock, selectorFor, describe, pageKey, load, save, putAsset, getAsset, deleteAsset, clearAssets, suggestCategory, aiTasks, markdown, buildZip };
 });

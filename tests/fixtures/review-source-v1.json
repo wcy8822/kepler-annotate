@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "vectors": [
+    {
+      "name": "plain",
+      "annotation": {
+        "id": 7,
+        "text": "按钮错位\n请对齐",
+        "category": "视觉",
+        "shot": "shots/007.png",
+        "refs": [],
+        "createdAt": "time noise"
+      },
+      "imageHashes": {
+        "shots/007.png": "bb25c6f4a7f26f46004a3c7b5a2aae924ea6cd2fdd21cb8b33c1e905cc2b808c"
+      },
+      "sha256": "0f4d1041da40b03cfe06f4e6eb1f7fac5644d5ec3abe469dc351184c7162d62e"
+    },
+    {
+      "name": "unicode_and_refs",
+      "annotation": {
+        "id": 9,
+        "text": "展示🌌，不要重排",
+        "category": "交互",
+        "observed": "图标错位",
+        "expected": "位置保持一致",
+        "reproduction": "点击两次",
+        "shot": "shots/🌌.png",
+        "refs": [
+          "refs/设计图.png",
+          "refs/配色.webp"
+        ],
+        "status": "处理中"
+      },
+      "imageHashes": {
+        "shots/🌌.png": "bb25c6f4a7f26f46004a3c7b5a2aae924ea6cd2fdd21cb8b33c1e905cc2b808c",
+        "refs/设计图.png": "20fb13513fe56d44c23515bda82203290d4608708eb7b733113c89dd79cb9c40",
+        "refs/配色.webp": "bb25c6f4a7f26f46004a3c7b5a2aae924ea6cd2fdd21cb8b33c1e905cc2b808c"
+      },
+      "sha256": "0e08235824027f24b559965d70326685f7619ee1fe9205dad5dffa311da15c79"
+    },
+    {
+      "name": "no_assets",
+      "annotation": {
+        "id": 12,
+        "text": "待讨论",
+        "category": null,
+        "refs": [],
+        "note": "not part of source identity"
+      },
+      "imageHashes": {},
+      "sha256": "477953b421bc29e9829ee85c0272f0f4f03caf8b293e97320c1e359fb2fda350"
+    }
+  ]
+}

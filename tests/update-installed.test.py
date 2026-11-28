@@ -13,7 +13,7 @@ from unittest.mock import patch
 sys.dont_write_bytecode = True
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "update-installed.py"
 FILES = (
-    "manifest.json", "service-worker.js", "kp-annotate.js",
+    "manifest.json", "service-worker.js", "review-suggestion.js", "review-provider.js", "kp-annotate.js",
     "kp-annotate-store.js", "kp-annotate-project.js", "kp-annotate.css",
     "vendor/jszip.min.js", "vendor/jszip.LICENSE", "INSTALL.html",
 )
